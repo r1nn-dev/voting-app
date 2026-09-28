@@ -208,7 +208,7 @@ describe("deletePoll", () => {
 
     expect(await polls.getPollForVoter(doomed, null)).toBeNull();
     const list = await polls.listPollsForAdmin();
-    expect(list.map((poll) => [poll.id, poll.results.total])).toEqual([[kept, 2]]);
+    expect(list.map((poll) => [poll.id, poll.tally.total])).toEqual([[kept, 2]]);
   });
 
   it("없는 투표를 지워도 성공한다", async () => {
@@ -233,8 +233,8 @@ describe("listPollsForAdmin", () => {
       list.map((poll) => [
         poll.question,
         poll.isClosed,
-        poll.results.total,
-        poll.results.options.map((option) => [option.label, option.votes]),
+        poll.tally.total,
+        poll.tally.options.map((option) => [option.label, option.votes]),
       ]),
     ).toEqual([
       ["마감", true, 3, [["x", 3], ["y", 0]]],

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/admin-session";
 import { getSql } from "@/lib/db";
 import { createPolls } from "@/lib/polls";
-import { ResultsBars } from "../results-bars";
+import { TallyBars } from "../tally-bars";
 import { StatusBadge } from "../status-badge";
 import { logout } from "./auth-actions";
 import { ConfirmActionButton } from "./confirm-action-button";
@@ -44,8 +44,10 @@ export default async function AdminPage() {
                 </Link>
                 <StatusBadge isClosed={poll.isClosed} />
               </div>
-              <p className="mb-2 text-sm text-zinc-500">총 {poll.results.total}표</p>
-              <ResultsBars results={poll.results} />
+              <p className="mb-2 text-sm text-zinc-500">
+                {poll.isClosed ? "결과" : "득표 현황"} · 총 {poll.tally.total}표
+              </p>
+              <TallyBars tally={poll.tally} />
               <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
                 <Link
                   href={`/polls/${poll.id}`}

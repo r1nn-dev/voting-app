@@ -11,17 +11,22 @@ export type PollSummary = {
 
 export type PollOption = { id: string; label: string };
 
-export type OptionResult = PollOption & {
-  votes: number;
+type OptionVotes = PollOption & { votes: number };
+
+export type OptionTally = OptionVotes & {
   /** Share of all votes, rounded to one decimal place. */
   percent: number;
   /** Has the most votes (ties all count); false for every option at zero votes. */
   isTop: boolean;
 };
 
-export type PollResults = { total: number; options: OptionResult[] };
+/**
+ * Vote counts per option. Shown to voters as the 결과 of a closed poll, and to
+ * the admin as 득표 현황 at any time (CONTEXT.md).
+ */
+export type VoteTally = { total: number; options: OptionTally[] };
 
-export type AdminPollSummary = PollSummary & { results: PollResults };
+export type AdminPollSummary = PollSummary & { tally: VoteTally };
 
 type VoterPollBase = {
   id: string;
@@ -34,7 +39,7 @@ type VoterPollBase = {
 /** Results exist only once closed: an open poll carries no numbers at all (ADR-0002). */
 export type VoterPoll =
   | (VoterPollBase & { status: "open" })
-  | (VoterPollBase & { status: "closed"; results: PollResults });
+  | (VoterPollBase & { status: "closed"; results: VoteTally });
 
 export type CreatePollInput = { question: string; options: string[] };
 
@@ -113,39 +118,36 @@ export function createPolls(sql: Sql) {
       return { ...base, options, status: "open" };
     }
 
-    const results = computeResults(await tally(pollId));
+    const results = computeTally((await countVotes(pollId)).get(pollId) ?? []);
     const options = results.options.map(({ id, label }) => ({ id, label }));
     return { ...base, options, status: "closed", results };
   }
 
-  /** Admins see vote counts at any time, to judge when to close. */
+  /** Admins see 득표 현황 at any time, to judge when to close. */
   async function listPollsForAdmin(): Promise<AdminPollSummary[]> {
     const summaries = await listPolls();
-    const tallies = (await sql`
-      SELECT o.poll_id, o.id::text AS id, o.label, count(v.voter_id)::int AS votes
-      FROM options o
-      LEFT JOIN votes v ON v.poll_id = o.poll_id AND v.option_id = o.id
-      GROUP BY o.id
-      ORDER BY o.poll_id, o.position
-    `) as (PollOption & { poll_id: string; votes: number })[];
-    const byPoll = Map.groupBy(tallies, (row) => row.poll_id);
+    const votesByPoll = await countVotes(null);
     return summaries.map((summary) => ({
       ...summary,
-      results: computeResults(
-        (byPoll.get(summary.id) ?? []).map(({ id, label, votes }) => ({ id, label, votes })),
-      ),
+      tally: computeTally(votesByPoll.get(summary.id) ?? []),
     }));
   }
 
-  async function tally(pollId: string): Promise<(PollOption & { votes: number })[]> {
-    return (await sql`
-      SELECT o.id::text AS id, o.label, count(v.voter_id)::int AS votes
+  /** Per-option vote counts in creation order, grouped by poll; null counts every poll. */
+  async function countVotes(pollId: string | null): Promise<Map<string, OptionVotes[]>> {
+    const rows = (await sql`
+      SELECT o.poll_id, o.id::text AS id, o.label, count(v.voter_id)::int AS votes
       FROM options o
       LEFT JOIN votes v ON v.poll_id = o.poll_id AND v.option_id = o.id
-      WHERE o.poll_id = ${pollId}
+      WHERE ${pollId}::text IS NULL OR o.poll_id = ${pollId}
       GROUP BY o.id
-      ORDER BY o.position
-    `) as (PollOption & { votes: number })[];
+      ORDER BY o.poll_id, o.position
+    `) as (OptionVotes & { poll_id: string })[];
+    const byPoll = new Map<string, OptionVotes[]>();
+    for (const { poll_id, ...option } of rows) {
+      byPoll.set(poll_id, [...(byPoll.get(poll_id) ?? []), option]);
+    }
+    return byPoll;
   }
 
   /** Irreversible (ADR-0002). Closing an already closed poll succeeds. */
@@ -202,12 +204,12 @@ export function createPolls(sql: Sql) {
   };
 }
 
-function computeResults(tallies: (PollOption & { votes: number })[]): PollResults {
-  const total = tallies.reduce((sum, option) => sum + option.votes, 0);
-  const top = Math.max(0, ...tallies.map((option) => option.votes));
+function computeTally(options: OptionVotes[]): VoteTally {
+  const total = options.reduce((sum, option) => sum + option.votes, 0);
+  const top = Math.max(0, ...options.map((option) => option.votes));
   return {
     total,
-    options: tallies.map((option) => ({
+    options: options.map((option) => ({
       ...option,
       percent: total === 0 ? 0 : Math.round((option.votes / total) * 1000) / 10,
       isTop: top > 0 && option.votes === top,
@@ -221,7 +223,7 @@ function validatePoll(question: string, options: string[]): CreatePollErrors | n
   const errors: CreatePollErrors = {};
 
   if (!question) errors.question = "질문을 입력하세요.";
-  else if (length(question) > questionMaxLength)
+  else if (charCount(question) > questionMaxLength)
     errors.question = `질문은 ${questionMaxLength}자 이하여야 합니다.`;
 
   if (options.length < minOptions || options.length > maxOptions)
@@ -231,7 +233,7 @@ function validatePoll(question: string, options: string[]): CreatePollErrors | n
   const seen = new Set<string>();
   options.forEach((option, index) => {
     if (!option) optionErrors[index] = "선택지를 입력하세요.";
-    else if (length(option) > optionMaxLength)
+    else if (charCount(option) > optionMaxLength)
       optionErrors[index] = `선택지는 ${optionMaxLength}자 이하여야 합니다.`;
     else if (seen.has(option)) optionErrors[index] = "같은 선택지가 이미 있습니다.";
     seen.add(option);
@@ -242,7 +244,7 @@ function validatePoll(question: string, options: string[]): CreatePollErrors | n
 }
 
 /** Length in characters (code points), not UTF-16 units. */
-function length(text: string): number {
+function charCount(text: string): number {
   return [...text].length;
 }
 

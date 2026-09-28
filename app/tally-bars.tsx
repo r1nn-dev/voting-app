@@ -1,15 +1,15 @@
-import type { PollResults } from "@/lib/polls";
+import type { VoteTally } from "@/lib/polls";
 
-export function ResultsBars({
-  results,
+export function TallyBars({
+  tally,
   myChoice = null,
 }: {
-  results: PollResults;
+  tally: VoteTally;
   myChoice?: string | null;
 }) {
   return (
     <ul className="flex flex-col gap-3">
-      {results.options.map((option) => (
+      {tally.options.map((option) => (
         <li key={option.id}>
           <div className="mb-1 flex items-baseline justify-between gap-4 text-sm">
             <span className={option.isTop ? "font-semibold" : undefined}>

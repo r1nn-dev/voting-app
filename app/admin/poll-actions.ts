@@ -1,10 +1,10 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/admin-session";
 import { getSql } from "@/lib/db";
 import { createPolls, type CreatePollErrors } from "@/lib/polls";
+import { revalidatePollPages } from "../revalidate-polls";
 
 export type CreatePollState = { errors?: CreatePollErrors };
 
@@ -20,8 +20,7 @@ export async function createPollAction(
   });
   if (!result.ok) return { errors: result.errors };
 
-  revalidatePath("/");
-  revalidatePath("/admin");
+  revalidatePollPages();
   redirect("/admin");
 }
 
@@ -31,9 +30,7 @@ export async function closePollAction(pollId: string): Promise<void> {
   // A poll deleted in another tab is already gone; nothing to report.
   await createPolls(getSql()).closePoll(pollId);
 
-  revalidatePath("/");
-  revalidatePath("/admin");
-  revalidatePath(`/polls/${pollId}`);
+  revalidatePollPages(pollId);
 }
 
 export async function deletePollAction(pollId: string): Promise<void> {
@@ -41,7 +38,5 @@ export async function deletePollAction(pollId: string): Promise<void> {
 
   await createPolls(getSql()).deletePoll(pollId);
 
-  revalidatePath("/");
-  revalidatePath("/admin");
-  revalidatePath(`/polls/${pollId}`);
+  revalidatePollPages(pollId);
 }
