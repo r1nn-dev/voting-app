@@ -1,0 +1,8 @@
+# ORM 없이 순수 SQL과 자체 마이그레이션 러너를 쓴다
+
+DB 접근은 `@neondatabase/serverless`의 `sql` 태그 템플릿으로 SQL을 직접 쓴다. Drizzle이나 Prisma는 쓰지 않는다. 테이블이 3개뿐이고, 핵심 무결성 규칙(ADR-0005)이 SQL 문장 자체에 있어서 ORM이 가리는 것보다 드러내는 편이 낫다. 스키마 변경은 `db/migrations/NNN_*.sql` 파일로 관리하고, 작은 러너 스크립트(`npm run db:migrate`)가 적용 기록을 `schema_migrations` 테이블에 남긴다. 같은 러너로 Neon의 `main`/`dev`/`test` 브랜치에 스키마를 적용한다.
+
+## Consequences
+
+- 쿼리 결과 타입은 직접 선언해야 한다. 쿼리는 한 모듈에 모아서 타입 선언이 흩어지지 않게 한다.
+- 값은 항상 태그 템플릿의 파라미터로 넘긴다. 문자열을 이어 붙여 SQL을 만들지 않는다.
