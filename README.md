@@ -51,8 +51,11 @@ DATABASE_URL="<main 브랜치 연결 문자열>" node scripts/migrate.mts
 ```bash
 npm install
 npm run db:migrate
-npm run dev        # http://localhost:3000, 관리 화면은 /admin
+npm run db:seed    # 빈 DB에 예시 투표 5개 (진행 중 3, 마감 2)
+npm run dev        # http://localhost:3000, 헤더의 "운영자" → /admin
 ```
+
+`npm run db:seed -- --reset`은 기존 투표를 모두 지우고 예시를 다시 넣습니다. `TEST_DATABASE_URL`이 dev 브랜치와 같다면 `npm test`가 끝날 때 DB가 비므로, 테스트 뒤에는 시드를 다시 넣어야 합니다.
 
 ## 테스트
 

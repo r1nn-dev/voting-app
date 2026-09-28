@@ -1,10 +1,15 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { resetDatabase, testSql } from "@/tests/db";
 import { createPolls } from "./polls";
 
 const polls = createPolls(testSql);
 
 beforeEach(async () => {
+  await resetDatabase();
+});
+
+// Leave no test polls behind, in case the test database is also the dev one.
+afterAll(async () => {
   await resetDatabase();
 });
 
