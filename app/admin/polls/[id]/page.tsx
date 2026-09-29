@@ -39,7 +39,10 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
         </Link>
       </div>
 
-      <RankChart ranking={poll.ranking} isClosed={poll.status === "closed"} />
+      <RankChart
+        ranking={poll.ranking}
+        openUntil={poll.status === "open" ? poll.deadline : null}
+      />
 
       {poll.status === "open" && (
         <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">

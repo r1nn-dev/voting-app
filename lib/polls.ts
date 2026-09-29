@@ -70,17 +70,26 @@ export type CreatePollResult =
   | { ok: true; id: string }
   | { ok: false; errors: CreatePollErrors };
 
-/** Options by votes, largest first; tied options share a rank and the next rank is skipped (1, 1, 3). */
+/**
+ * Options by votes, largest first; tied options share a rank and the next rank
+ * is skipped (1, 1, 3). With no votes at all every option is rank 1, but none
+ * is highlighted (isTop stays false).
+ */
 export type RankedOption = OptionTally & { rank: number };
 
-export type RankSummary = {
-  total: number;
-  /** Every option with the most votes; empty when nobody has voted. */
-  leaders: PollOption[];
-  isTie: boolean;
-  /** 1위 minus 2위; 0 when the top is tied, null when nobody has voted. */
-  gap: { votes: number; percentPoints: number } | null;
-};
+/** Who is ahead: nobody has voted, one option leads, or the top is tied. */
+export type RankSummary =
+  | { kind: "empty"; total: 0 }
+  | {
+      kind: "decided";
+      total: number;
+      leader: PollOption;
+      /** 1위 minus 2위, %p computed from the raw shares. */
+      gap: { votes: number; percentPoints: number };
+    }
+  | { kind: "tied"; total: number; leaders: PollOption[] };
+
+export type Ranking = { options: RankedOption[]; summary: RankSummary };
 
 export type AdminPoll = {
   id: string;
@@ -90,7 +99,7 @@ export type AdminPoll = {
   /** 마감 시각; null while open. */
   closedAt: Date | null;
   /** 득표 현황 while open, 결과 once closed; the admin sees it either way. */
-  ranking: { options: RankedOption[]; summary: RankSummary };
+  ranking: Ranking;
 };
 
 export type ExtendDeadlineFailure = "not_found" | "closed" | "not_later" | "out_of_range";
@@ -359,7 +368,7 @@ function computeTally(options: OptionVotes[]): VoteTally {
   };
 }
 
-function computeRanking(votes: OptionVotes[]): AdminPoll["ranking"] {
+function computeRanking(votes: OptionVotes[]): Ranking {
   const tally = computeTally(votes);
   const sorted = tally.options.toSorted((a, b) => b.votes - a.votes);
   const options = sorted.map((option) => ({
@@ -368,19 +377,21 @@ function computeRanking(votes: OptionVotes[]): AdminPoll["ranking"] {
     rank: 1 + sorted.filter((other) => other.votes > option.votes).length,
   }));
 
-  if (tally.total === 0) {
-    return { options, summary: { total: 0, leaders: [], isTie: false, gap: null } };
+  if (tally.total === 0) return { options, summary: { kind: "empty", total: 0 } };
+
+  const leaders = options.filter((option) => option.isTop).map(({ id, label }) => ({ id, label }));
+  if (leaders.length > 1) {
+    return { options, summary: { kind: "tied", total: tally.total, leaders } };
   }
   const [first, second] = sorted;
-  const leaders = options.filter((option) => option.isTop).map(({ id, label }) => ({ id, label }));
   // From raw shares, not the rounded percents: 66.67 - 33.33 is 33.3, not 66.7 - 33.3.
   const rawGap = ((first.votes - second.votes) / tally.total) * 100;
   return {
     options,
     summary: {
+      kind: "decided",
       total: tally.total,
-      leaders,
-      isTie: leaders.length > 1,
+      leader: leaders[0],
       gap: { votes: first.votes - second.votes, percentPoints: Math.round(rawGap * 10) / 10 },
     },
   };

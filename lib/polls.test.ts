@@ -428,9 +428,9 @@ describe("getPollForAdmin 순위와 격차", () => {
     const { summary } = await ranking(["a", "b", "c"], [2, 1, 0]);
 
     expect(summary).toEqual({
+      kind: "decided",
       total: 3,
-      leaders: [expect.objectContaining({ label: "a" })],
-      isTie: false,
+      leader: expect.objectContaining({ label: "a" }),
       gap: { votes: 1, percentPoints: 33.3 },
     });
   });
@@ -438,15 +438,21 @@ describe("getPollForAdmin 순위와 격차", () => {
   it("1위가 동점이면 동점인 선택지를 모두 1위로 두고, 차이는 0이다", async () => {
     const { summary } = await ranking(["a", "b", "c"], [2, 2, 1]);
 
-    expect(summary.isTie).toBe(true);
-    expect(summary.leaders.map((option) => option.label)).toEqual(["a", "b"]);
-    expect(summary.gap).toEqual({ votes: 0, percentPoints: 0 });
+    expect(summary).toEqual({
+      kind: "tied",
+      total: 5,
+      leaders: [expect.objectContaining({ label: "a" }), expect.objectContaining({ label: "b" })],
+    });
   });
 
-  it("표가 없으면 1위와 격차가 없다", async () => {
-    const { summary } = await ranking(["a", "b"], [0, 0]);
+  it("표가 없으면 1위와 격차가 없고, 모든 선택지가 1위이되 강조되지 않는다", async () => {
+    const { summary, options } = await ranking(["a", "b"], [0, 0]);
 
-    expect(summary).toEqual({ total: 0, leaders: [], isTie: false, gap: null });
+    expect(summary).toEqual({ kind: "empty", total: 0 });
+    expect(options.map(({ label, rank, isTop }) => [label, rank, isTop])).toEqual([
+      ["a", 1, false],
+      ["b", 1, false],
+    ]);
   });
 
   it("마감 전에도 관리자에게는 득표 현황이 있고, 투표자에게는 여전히 수치가 없다", async () => {
@@ -457,7 +463,11 @@ describe("getPollForAdmin 순위와 격차", () => {
     const voter = await polls.getPollForVoter(id, null);
 
     expect(admin?.status).toBe("open");
-    expect(admin?.ranking.summary.total).toBe(3);
+    expect(admin?.ranking.options.map(({ label, rank }) => [label, rank])).toEqual([
+      ["b", 1],
+      ["a", 2],
+    ]);
+    expect(admin?.ranking.summary).toMatchObject({ kind: "decided", gap: { votes: 1 } });
     expect(voter).not.toHaveProperty("results");
     expect(JSON.stringify(voter)).not.toMatch(/votes|total|percent|rank/i);
   });

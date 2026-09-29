@@ -1,37 +1,27 @@
-import type { AdminPoll } from "@/lib/polls";
+import { formatRemaining } from "@/lib/kst-time";
+import type { Ranking, RankSummary } from "@/lib/polls";
 
-/** 순위와 격차: the summary line plus bars sorted by votes. Numbers are always in text too. */
-export function RankChart({
-  ranking,
-  isClosed,
-}: {
-  ranking: AdminPoll["ranking"];
-  isClosed: boolean;
-}) {
+/**
+ * 순위와 격차: the summary plus bars sorted by votes. Numbers are always in
+ * text too. `openUntil` is the deadline while the poll is open, null otherwise.
+ */
+export function RankChart({ ranking, openUntil }: { ranking: Ranking; openUntil: Date | null }) {
   const { options, summary } = ranking;
 
   return (
     <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-      <h2 className="mb-3 font-medium">{isClosed ? "결과" : "득표 현황"}</h2>
+      <div className="mb-3 flex items-baseline justify-between gap-4">
+        <h2 className="font-medium">{openUntil ? "득표 현황" : "결과"}</h2>
+        {openUntil && (
+          <span className="text-sm text-zinc-500">마감 예정까지 {formatRemaining(openUntil)}</span>
+        )}
+      </div>
 
-      {summary.total === 0 ? (
+      {summary.kind === "empty" ? (
         <p className="text-sm text-zinc-500">아직 표 없음</p>
       ) : (
         <>
-          <dl className="mb-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-            <dt className="text-zinc-500">총 표 수</dt>
-            <dd className="tabular-nums">{summary.total}표</dd>
-            <dt className="text-zinc-500">{summary.isTie ? "동점 1위" : "1위"}</dt>
-            <dd className="font-semibold">
-              {summary.leaders.map((leader) => leader.label).join(", ")}
-            </dd>
-            <dt className="text-zinc-500">1위와 2위 차이</dt>
-            <dd className="tabular-nums">
-              {summary.isTie
-                ? "동점"
-                : `${summary.gap!.votes}표 (${summary.gap!.percentPoints.toFixed(1)}%p)`}
-            </dd>
-          </dl>
+          <Summary summary={summary} />
 
           <ol className="flex flex-col gap-3">
             {options.map((option) => (
@@ -59,5 +49,31 @@ export function RankChart({
         </>
       )}
     </div>
+  );
+}
+
+function Summary({ summary }: { summary: Exclude<RankSummary, { kind: "empty" }> }) {
+  return (
+    <dl className="mb-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+      <dt className="text-zinc-500">총 표 수</dt>
+      <dd className="tabular-nums">{summary.total}표</dd>
+      {summary.kind === "tied" ? (
+        <>
+          <dt className="text-zinc-500">동점 1위</dt>
+          <dd className="font-semibold">{summary.leaders.map((leader) => leader.label).join(", ")}</dd>
+          <dt className="text-zinc-500">1위와 2위 차이</dt>
+          <dd>동점</dd>
+        </>
+      ) : (
+        <>
+          <dt className="text-zinc-500">1위</dt>
+          <dd className="font-semibold">{summary.leader.label}</dd>
+          <dt className="text-zinc-500">1위와 2위 차이</dt>
+          <dd className="tabular-nums">
+            {summary.gap.votes}표 ({summary.gap.percentPoints.toFixed(1)}%p)
+          </dd>
+        </>
+      )}
+    </dl>
   );
 }
