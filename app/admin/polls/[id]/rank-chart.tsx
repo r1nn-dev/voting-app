@@ -6,7 +6,16 @@ import { card, cardPadding } from "../../../ui";
  * 순위와 격차: the summary plus bars sorted by votes. Numbers are always in
  * text too. `openUntil` is the deadline while the poll is open, null otherwise.
  */
-export function RankChart({ ranking, openUntil }: { ranking: Ranking; openUntil: Date | null }) {
+export function RankChart({
+  ranking,
+  openUntil,
+  multiple = false,
+}: {
+  ranking: Ranking;
+  openUntil: Date | null;
+  /** 복수 선택: percents are per 표 and can sum to more than 100%. */
+  multiple?: boolean;
+}) {
   const { options, summary } = ranking;
 
   return (
@@ -63,6 +72,11 @@ export function RankChart({ ranking, openUntil }: { ranking: Ranking; openUntil:
               </li>
             ))}
           </ol>
+          {multiple && (
+            <p className="mt-5 text-xs text-zinc-500 dark:text-zinc-400">
+              비율은 표 대비입니다. 한 표에 여러 개를 고를 수 있어 합이 100%를 넘을 수 있습니다.
+            </p>
+          )}
         </>
       )}
     </section>

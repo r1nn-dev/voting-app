@@ -22,16 +22,15 @@ const FAILURE_MESSAGES: Record<CastVoteFailure, string> = {
 // in a client component hangs when the form is submitted without JavaScript.
 export async function castVoteAction(_prev: VoteState, formData: FormData): Promise<VoteState> {
   const pollId = String(formData.get("pollId") ?? "");
-  const optionId = formData.get("optionId");
+  // One value in 단일 선택, one per checked box in 복수 선택.
+  const optionIds = formData.getAll("optionId").filter((value) => typeof value === "string" && value);
   // Only a 참여 코드 poll's form has this field.
   const code = formData.get("code");
-  if (typeof optionId !== "string" || !optionId) {
-    return { error: "선택지를 하나 골라 주세요." };
-  }
+  if (optionIds.length === 0) return { error: "선택지를 골라 주세요." };
 
   const result = await createPolls(getSql()).castVote(
     pollId,
-    [optionId],
+    optionIds.map(String),
     await getOrIssueVoterId(),
     typeof code === "string" ? code : null,
   );

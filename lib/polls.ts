@@ -6,6 +6,12 @@ import { POLL_LIMITS } from "./poll-limits";
 /** scheduled → open → closed (by hand or deadline) → archived (30 days after 마감 시각). */
 export type PollStatus = "scheduled" | "open" | "closed" | "archived";
 
+/** 투표 모드: 단일 선택 takes one option per 표, 복수 선택 up to its 최대 선택 수. */
+export type PollMode = "single" | "multiple";
+
+/** The 투표 모드 with its 최대 선택 수, which is 1 for 단일 선택. Fixed at creation. */
+type ModeFields = { mode: PollMode; maxChoices: number };
+
 /** A poll's state as every list sees it; only closed and archived polls have a 마감 시각. */
 type PollSummary = {
   id: string;
@@ -13,7 +19,7 @@ type PollSummary = {
   opensAt: Date;
   deadline: Date;
   listed: boolean;
-} & (
+} & ModeFields & (
   | { status: "scheduled" | "open" }
   | { status: "closed" | "archived"; closedAt: Date; archivesAt: Date }
 );
@@ -23,7 +29,10 @@ export type PollOption = { id: string; label: string };
 type OptionVotes = PollOption & { votes: number };
 
 export type OptionTally = OptionVotes & {
-  /** Share of all votes, rounded to one decimal place. */
+  /**
+   * Share of 표 (ballots) that chose it, rounded to one decimal place. Sums to
+   * 100 in 단일 선택; in 복수 선택 it can sum to more (ADR-0008).
+   */
   percent: number;
   /** Has the most votes (ties all count); false for every option at zero votes. */
   isTop: boolean;
@@ -31,9 +40,13 @@ export type OptionTally = OptionVotes & {
 
 /**
  * Vote counts per option. Shown to voters as the 결과 of a closed poll, and to
- * the admin as 득표 현황 at any time (CONTEXT.md).
+ * the admin as 득표 현황 at any time (CONTEXT.md). `total` counts 표 (ballots),
+ * not chosen options.
  */
 export type VoteTally = { total: number; options: OptionTally[] };
+
+/** Per-option counts plus the number of 표, as the tallies need both. */
+type VoteCount = { options: OptionVotes[]; ballots: number };
 
 /** One row of the admin list: enough to judge a poll at a glance. */
 export type AdminListItem = {
@@ -44,6 +57,8 @@ export type AdminListItem = {
   /** 목록 공개 (true) or 링크 전용 (false). */
   listed: boolean;
   total: number;
+  mode: PollMode;
+  maxChoices: number;
   /** Options with the most votes (several when tied); empty when nobody has voted. */
   leaders: PollOption[];
 };
@@ -80,7 +95,7 @@ type VoterPollBase = {
   myChoices: string[];
   /** 참여 코드 poll: every ballot needs an unused code. */
   usesCodes: boolean;
-};
+} & ModeFields;
 
 /**
  * Results exist only once closed: an open poll carries no numbers at all
@@ -113,11 +128,17 @@ export type CreatePollInput = {
   listed?: boolean;
   /** 참여 코드 to issue with the poll: 0 or missing means no codes, otherwise 1~500. */
   codeCount?: number;
+  /** 단일 선택 unless "multiple". */
+  mode?: PollMode;
+  /** 복수 선택 only: 2 to the number of options; missing means all of them. */
+  maxChoices?: number | null;
 };
 
 export type CreatePollErrors = {
   question?: string;
   codeCount?: string;
+  mode?: string;
+  maxChoices?: string;
   opensAt?: string;
   deadline?: string;
   /** Problem with the option list as a whole (count). */
@@ -156,6 +177,8 @@ export type AdminPoll = {
   question: string;
   status: PollStatus;
   listed: boolean;
+  mode: PollMode;
+  maxChoices: number;
   opensAt: Date;
   deadline: Date;
   /** 마감 시각; null while open. */
@@ -173,6 +196,8 @@ export type PollTemplate = {
   options: string[];
   listed: boolean;
   usesCodes: boolean;
+  mode: PollMode;
+  maxChoices: number;
 };
 
 export type IssueCodesFailure = "not_found" | "codes_disabled" | "closed" | "limit_exceeded";
@@ -246,6 +271,9 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     END AS archives_at
   `;
 
+  /** 투표 모드 columns of `polls p`; 단일 선택's 최대 선택 수 reads as 1. */
+  const modeColumns = sql`p.mode, coalesce(p.max_choices, 1) AS max_choices`;
+
   /**
    * 시작 예정 시각 within 30 days from now; 마감 예정 시각 10 minutes to 30 days
    * after the 시작 예정 시각 (ADR-0006). Both as SQL booleans on the same clock.
@@ -263,13 +291,14 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   async function listAll(): Promise<PollSummary[]> {
     const at = readClock();
     const rows = (await sql`
-      SELECT p.id, p.question, p.listed, ${pollState(at)}
+      SELECT p.id, p.question, p.listed, ${modeColumns}, ${pollState(at)}
       FROM polls p
       ORDER BY p.created_at DESC, p.id DESC
-    `) as ({ id: string; question: string; listed: boolean } & PollStateRow)[];
+    `) as ({ id: string; question: string; listed: boolean } & ModeRow & PollStateRow)[];
     // closed_at and archives_at are set exactly when the poll is not open (pollState).
-    return rows.map(({ id, question, listed, status, opens_at, deadline, closed_at, archives_at }) => {
-      const base = { id, question, opensAt: opens_at, deadline, listed };
+    return rows.map((row) => {
+      const { id, question, listed, status, opens_at, deadline, closed_at, archives_at } = row;
+      const base = { id, question, opensAt: opens_at, deadline, listed, ...modeOf(row) };
       return status === "scheduled" || status === "open"
         ? { ...base, status }
         : { ...base, status, closedAt: closed_at!, archivesAt: archives_at! };
@@ -292,7 +321,13 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     const question = input.question.trim();
     const options = input.options.map((option) => option.trim());
     const codeCount = input.codeCount ?? 0;
-    const errors = validatePoll(question, options, input.deadline, input.opensAt ?? null, codeCount);
+    const mode = input.mode ?? "single";
+    // 복수 선택 without a 최대 선택 수 lets every option be chosen.
+    const maxChoices = mode === "multiple" ? (input.maxChoices ?? options.length) : null;
+    const errors = validatePoll(question, options, input.deadline, input.opensAt ?? null, codeCount, {
+      mode,
+      maxChoices: input.maxChoices ?? null,
+    });
     if (errors || !input.deadline) return { ok: false, errors: errors ?? {} };
 
     const id = newPollId();
@@ -304,8 +339,10 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     // The time ranges are checked here, against the same "now" as every judgement.
     const inserted = await sql`
       WITH poll AS (
-        INSERT INTO polls (id, question, opens_at, deadline, listed, uses_codes)
-        SELECT ${id}, ${question}, ${opens}, ${deadline}, ${input.listed ?? true}, ${codeCount > 0}
+        INSERT INTO polls (id, question, opens_at, deadline, listed, uses_codes, mode, max_choices)
+        SELECT
+          ${id}, ${question}, ${opens}, ${deadline}, ${input.listed ?? true}, ${codeCount > 0},
+          ${mode}, ${maxChoices}::int
         WHERE ${ranges.opensOk} AND ${ranges.deadlineOk}
         RETURNING id
       ),
@@ -342,6 +379,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
         p.id,
         p.question,
         p.uses_codes,
+        ${modeColumns},
         ${pollState(at)},
         ARRAY(
           SELECT c.option_id::text
@@ -357,7 +395,8 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
         ) AS my_choices
       FROM polls p
       WHERE p.id = ${pollId}
-    `) as ({ id: string; question: string; uses_codes: boolean; my_choices: string[] } & PollStateRow)[];
+    `) as ({ id: string; question: string; uses_codes: boolean; my_choices: string[] } & ModeRow &
+      PollStateRow)[];
     if (!poll) return null;
     if (poll.status === "archived") return { id: poll.id, status: "archived" };
 
@@ -366,6 +405,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       question: poll.question,
       myChoices: poll.my_choices,
       usesCodes: poll.uses_codes,
+      ...modeOf(poll),
     };
 
     if (poll.status === "scheduled" || poll.status === "open") {
@@ -377,7 +417,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
         : { ...base, options, status: "open", deadline: poll.deadline };
     }
 
-    const tally = computeTally((await countVotes(pollId)).get(pollId) ?? []);
+    const tally = computeTally((await countVotes(pollId)).get(pollId) ?? NO_VOTES);
     const options = tally.options.map(({ id, label }) => ({ id, label }));
     const results = computeShare(tally, poll.my_choices);
     return { ...base, options, status: "closed", closedAt: poll.closed_at!, results };
@@ -387,14 +427,16 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   async function listPollsForAdmin(): Promise<AdminPollList> {
     const { scheduled, open, closed, archived } = groupByStatus(await listAll());
     const votesByPoll = await countVotes(null);
-    const item = ({ id, question, opensAt, deadline, listed }: PollSummary): AdminListItem => {
-      const tally = computeTally(votesByPoll.get(id) ?? []);
+    const item = ({ id, question, opensAt, deadline, listed, mode, maxChoices }: PollSummary): AdminListItem => {
+      const tally = computeTally(votesByPoll.get(id) ?? NO_VOTES);
       return {
         id,
         question,
         opensAt,
         deadline,
         listed,
+        mode,
+        maxChoices,
         total: tally.total,
         leaders: leadersOf(tally),
       };
@@ -411,8 +453,11 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     };
   }
 
-  /** Per-option vote counts in creation order, grouped by poll; null counts every poll. */
-  async function countVotes(pollId: string | null): Promise<Map<string, OptionVotes[]>> {
+  /**
+   * Per-option vote counts in creation order and the number of 표, grouped by
+   * poll; null counts every poll.
+   */
+  async function countVotes(pollId: string | null): Promise<Map<string, VoteCount>> {
     const rows = (await sql`
       SELECT o.poll_id, o.id::text AS id, o.label, count(c.ballot_id)::int AS votes
       FROM options o
@@ -421,9 +466,17 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       GROUP BY o.id
       ORDER BY o.poll_id, o.position
     `) as (OptionVotes & { poll_id: string })[];
-    const byPoll = new Map<string, OptionVotes[]>();
+    const ballots = (await sql`
+      SELECT poll_id, count(*)::int AS ballots
+      FROM ballots
+      WHERE ${pollId}::text IS NULL OR poll_id = ${pollId}
+      GROUP BY poll_id
+    `) as { poll_id: string; ballots: number }[];
+    const ballotsByPoll = new Map(ballots.map((row) => [row.poll_id, row.ballots]));
+    const byPoll = new Map<string, VoteCount>();
     for (const { poll_id, ...option } of rows) {
-      byPoll.set(poll_id, [...(byPoll.get(poll_id) ?? []), option]);
+      const count = byPoll.get(poll_id) ?? { options: [], ballots: ballotsByPoll.get(poll_id) ?? 0 };
+      byPoll.set(poll_id, { ...count, options: [...count.options, option] });
     }
     return byPoll;
   }
@@ -455,7 +508,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     const at = readClock();
     const [poll] = (await sql`
       SELECT
-        p.id, p.question, p.listed, p.uses_codes, ${pollState(at)},
+        p.id, p.question, p.listed, p.uses_codes, ${modeColumns}, ${pollState(at)},
         (SELECT count(*)::int FROM participation_codes c WHERE c.poll_id = p.id) AS codes_issued,
         (SELECT count(*)::int FROM participation_codes c WHERE c.poll_id = p.id AND c.used_at IS NOT NULL)
           AS codes_used
@@ -468,15 +521,17 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       uses_codes: boolean;
       codes_issued: number;
       codes_used: number;
-    } & PollStateRow)[];
+    } & ModeRow & PollStateRow)[];
     if (!poll) return null;
     // countVotes returns options in creation order, which the template keeps.
-    const votes = (await countVotes(pollId)).get(pollId) ?? [];
+    const votes = (await countVotes(pollId)).get(pollId) ?? NO_VOTES;
+    const mode = modeOf(poll);
     return {
       id: poll.id,
       question: poll.question,
       status: poll.status,
       listed: poll.listed,
+      ...mode,
       opensAt: poll.opens_at,
       deadline: poll.deadline,
       closedAt: poll.closed_at,
@@ -484,9 +539,10 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       codes: poll.uses_codes ? { issued: poll.codes_issued, used: poll.codes_used } : null,
       template: {
         question: poll.question,
-        options: votes.map((option) => option.label),
+        options: votes.options.map((option) => option.label),
         listed: poll.listed,
         usesCodes: poll.uses_codes,
+        ...mode,
       },
     };
   }
@@ -502,6 +558,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     const rows: (string | number)[][] = [
       ["질문", poll.question],
       ["상태", STATUS_LABELS[poll.status]],
+      ["투표 모드", modeLabel(poll)],
       ["시작 예정 시각", formatKst(poll.opensAt)],
       ["마감 예정 시각", formatKst(poll.deadline)],
       ["마감 시각", poll.closedAt ? formatKst(poll.closedAt) : ""],
@@ -681,17 +738,27 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     voterId: string,
     code?: string | null,
   ): Promise<CastVoteResult> {
-    // 단일 선택: exactly one option.
-    if (optionIds.length !== 1 || !optionIds.every((id) => /^\d{1,18}$/.test(id))) {
+    // Only a quick refusal; how many options the 투표 모드 allows is checked in
+    // the statement below.
+    if (
+      optionIds.length < 1 ||
+      optionIds.length > POLL_LIMITS.maxOptions ||
+      new Set(optionIds).size !== optionIds.length ||
+      !optionIds.every((id) => /^\d{1,18}$/.test(id))
+    ) {
       return { ok: false, reason: "invalid_choice" };
     }
+    const chosen = sql`cardinality(${optionIds}::bigint[])`;
+    const withinMode = sql`(${chosen} BETWEEN 1 AND coalesce(p.max_choices, 1))`;
 
     const at = readClock();
     let inserted: unknown[];
     try {
       inserted = await sql`
         WITH target AS (
-          SELECT p.id, p.uses_codes FROM polls p WHERE p.id = ${pollId} AND ${acceptsVotes(at)}
+          SELECT p.id, p.uses_codes
+          FROM polls p
+          WHERE p.id = ${pollId} AND ${acceptsVotes(at)} AND ${withinMode}
         ),
         spent AS (
           UPDATE participation_codes c SET used_at = ${at}
@@ -724,13 +791,19 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
 
     // Only explains the refusal. Which way a code failed is never told (ADR-0007).
     const [poll] = (await sql`
-      SELECT ${hasStarted(at)} AS started, ${isClosed(at)} AS is_closed, p.uses_codes
+      SELECT
+        ${hasStarted(at)} AS started,
+        ${isClosed(at)} AS is_closed,
+        ${withinMode} AS within_mode,
+        p.uses_codes
       FROM polls p
       WHERE p.id = ${pollId}
-    `) as { started: boolean; is_closed: boolean; uses_codes: boolean }[];
+    `) as { started: boolean; is_closed: boolean; within_mode: boolean; uses_codes: boolean }[];
     if (!poll) return { ok: false, reason: "not_found" };
     if (!poll.started) return { ok: false, reason: "not_started" };
-    if (poll.is_closed || !poll.uses_codes) return { ok: false, reason: "closed" };
+    if (poll.is_closed) return { ok: false, reason: "closed" };
+    if (!poll.within_mode) return { ok: false, reason: "invalid_choice" };
+    if (!poll.uses_codes) return { ok: false, reason: "closed" };
     return { ok: false, reason: "invalid_code" };
   }
 
@@ -752,6 +825,17 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     deletePoll,
   };
 }
+
+type ModeRow = { mode: PollMode; max_choices: number };
+
+const modeOf = (row: ModeRow): ModeFields => ({ mode: row.mode, maxChoices: row.max_choices });
+
+/** "단일 선택" or "복수 선택 (최대 N개)". */
+export function modeLabel({ mode, maxChoices }: ModeFields): string {
+  return mode === "single" ? "단일 선택" : `복수 선택 (최대 ${maxChoices}개)`;
+}
+
+const NO_VOTES: VoteCount = { options: [], ballots: 0 };
 
 const STATUS_LABELS: Record<PollStatus, string> = {
   scheduled: "시작 전",
@@ -795,8 +879,8 @@ function groupByStatus(polls: PollSummary[]) {
   return { scheduled, open, closed: closedIn("closed"), archived: closedIn("archived") };
 }
 
-function computeTally(options: OptionVotes[]): VoteTally {
-  const total = options.reduce((sum, option) => sum + option.votes, 0);
+/** Percents are per 표, so they sum to 100 only in 단일 선택 (ADR-0008). */
+function computeTally({ options, ballots: total }: VoteCount): VoteTally {
   const top = Math.max(0, ...options.map((option) => option.votes));
   return {
     total,
@@ -808,7 +892,7 @@ function computeTally(options: OptionVotes[]): VoteTally {
   };
 }
 
-function computeRanking(votes: OptionVotes[]): Ranking {
+function computeRanking(votes: VoteCount): Ranking {
   const tally = computeTally(votes);
   const sorted = tally.options.toSorted((a, b) => b.votes - a.votes);
   const options = sorted.map((option) => ({
@@ -824,7 +908,7 @@ function computeRanking(votes: OptionVotes[]): Ranking {
     return { options, summary: { kind: "tied", total: tally.total, leaders } };
   }
   const [first, second] = sorted;
-  // From raw shares, not the rounded percents: 66.67 - 33.33 is 33.3, not 66.7 - 33.3.
+  // From raw shares of 표, not the rounded percents: 66.67 - 33.33 is 33.3, not 66.7 - 33.3.
   const rawGap = ((first.votes - second.votes) / tally.total) * 100;
   return {
     options,
@@ -857,9 +941,20 @@ function validatePoll(
   deadline: Date | null,
   opensAt: Date | null,
   codeCount: number,
+  { mode, maxChoices }: { mode: PollMode; maxChoices: number | null },
 ): CreatePollErrors | null {
   const { questionMaxLength, optionMaxLength, minOptions, maxOptions, maxCodes } = POLL_LIMITS;
   const errors: CreatePollErrors = {};
+
+  if (mode !== "single" && mode !== "multiple") errors.mode = "투표 모드를 고르세요.";
+  else if (mode === "single" && maxChoices !== null)
+    errors.maxChoices = "단일 선택에는 최대 선택 수가 없습니다.";
+  else if (
+    mode === "multiple" &&
+    maxChoices !== null &&
+    (!Number.isInteger(maxChoices) || maxChoices < 2 || maxChoices > options.length)
+  )
+    errors.maxChoices = `최대 선택 수는 2~${options.length}개(선택지 개수) 사이여야 합니다.`;
 
   if (!Number.isInteger(codeCount) || codeCount < 0 || codeCount > maxCodes)
     errors.codeCount = `참여 코드는 1~${maxCodes}개까지 발급할 수 있습니다.`;

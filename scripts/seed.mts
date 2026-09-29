@@ -11,8 +11,8 @@ const DAY = 24 * HOUR;
 type SamplePoll = {
   question: string;
   options: string[];
-  /** Votes per option, in the same order. */
-  votes: number[];
+  /** 단일 선택 votes per option, in the same order. */
+  votes?: number[];
   /** 마감 예정 시각 relative to now; negative means it has already passed. */
   deadlineIn: number;
   /** Set when the admin closed it by hand, this long ago. */
@@ -25,9 +25,20 @@ type SamplePoll = {
   opensIn?: number;
   /** 참여 코드 to issue; every seeded vote then spends one. */
   codes?: number;
+  /** 복수 선택: each 표 lists option positions; replaces `votes`. */
+  ballots?: number[][];
+  maxChoices?: number;
 };
 
 const SAMPLE_POLLS: SamplePoll[] = [
+  {
+    question: "동아리 축제 때 운영할 부스를 골라 주세요 (복수 선택)",
+    options: ["먹거리", "포토존", "보드게임", "플리마켓"],
+    ballots: [[0, 1], [0, 2, 3], [1], [0, 1, 2], [2, 3], [0], [0, 3], [1, 2]],
+    maxChoices: 3,
+    closedAgo: 5 * HOUR,
+    deadlineIn: -5 * HOUR,
+  },
   {
     question: "우리 반 반장으로 누구를 뽑을까요?",
     options: ["김민준", "이서연", "박지호"],
@@ -121,11 +132,14 @@ for (const [index, poll] of [...SAMPLE_POLLS].reverse().entries()) {
   const deadline = new Date(now + poll.deadlineIn);
   const closedAt = poll.closedAgo === undefined ? null : new Date(now - poll.closedAgo);
   await sql`
-    INSERT INTO polls (id, question, created_at, opens_at, deadline, closed_at, listed, uses_codes)
+    INSERT INTO polls (
+      id, question, created_at, opens_at, deadline, closed_at, listed, uses_codes, mode, max_choices
+    )
     VALUES (
       ${id}, ${poll.question}, ${createdAt},
       ${poll.opensIn === undefined ? createdAt : new Date(now + poll.opensIn)},
-      ${deadline}, ${closedAt}, ${poll.listed ?? true}, ${(poll.codes ?? 0) > 0}
+      ${deadline}, ${closedAt}, ${poll.listed ?? true}, ${(poll.codes ?? 0) > 0},
+      ${poll.ballots ? "multiple" : "single"}, ${poll.ballots ? (poll.maxChoices ?? poll.options.length) : null}::int
     )
   `;
   const optionRows = (await sql`
@@ -136,29 +150,31 @@ for (const [index, poll] of [...SAMPLE_POLLS].reverse().entries()) {
   `) as { id: string; position: number }[];
   const optionIdAt = new Map(optionRows.map((row) => [row.position, row.id]));
 
+  // Every 표 as the option positions it chose.
+  const ballots =
+    poll.ballots ??
+    (poll.votes ?? []).flatMap((count, position) => Array.from({ length: count }, () => [position]));
   const codes = sampleCodes(poll.codes ?? 0);
-  const totalVotes = poll.votes.reduce((sum, count) => sum + count, 0);
   if (codes.length > 0) {
     // The first codes are the ones the seeded votes spent.
     await sql`
       INSERT INTO participation_codes (poll_id, code, used_at)
-      SELECT ${id}, code, CASE WHEN ordinality <= ${totalVotes} THEN now() END
+      SELECT ${id}, code, CASE WHEN ordinality <= ${ballots.length} THEN now() END
       FROM unnest(${codes}::text[]) WITH ORDINALITY AS c (code, ordinality)
     `;
   }
 
-  for (const [position, voteCount] of poll.votes.entries()) {
-    for (let i = 0; i < voteCount; i++) {
-      await sql`
-        WITH ballot AS (
-          INSERT INTO ballots (poll_id, voter_id, by_code)
-          VALUES (${id}, ${randomUUID()}::uuid, ${codes.length > 0})
-          RETURNING id
-        )
-        INSERT INTO ballot_choices (ballot_id, poll_id, option_id)
-        SELECT id, ${id}, ${optionIdAt.get(position)}::bigint FROM ballot
-      `;
-    }
+  for (const positions of ballots) {
+    await sql`
+      WITH ballot AS (
+        INSERT INTO ballots (poll_id, voter_id, by_code)
+        VALUES (${id}, ${randomUUID()}::uuid, ${codes.length > 0})
+        RETURNING id
+      )
+      INSERT INTO ballot_choices (ballot_id, poll_id, option_id)
+      SELECT ballot.id, ${id}, option_id
+      FROM ballot, unnest(${positions.map((position) => optionIdAt.get(position))}::bigint[]) AS option_id
+    `;
   }
 }
 

@@ -9,6 +9,7 @@ import { pollUrl, qrSvg } from "@/lib/share";
 import { ArrowLeftIcon, ClockIcon } from "../../../icons";
 import { UnlistedBadge } from "../../../listed-badge";
 import { SharePanel } from "../../../share-panel";
+import { ModeBadge } from "../../../mode-badge";
 import { StatusBadge } from "../../../status-badge";
 import { backLink, buttonSecondary, card, cardPadding, hint } from "../../../ui";
 import { ConfirmActionButton } from "../../confirm-action-button";
@@ -42,6 +43,7 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
         <div className="flex items-start justify-between gap-4">
           <h1 className="text-2xl font-bold leading-snug tracking-tight">{poll.question}</h1>
           <span className="flex shrink-0 items-center gap-1.5">
+            <ModeBadge mode={poll.mode} maxChoices={poll.maxChoices} />
             <UnlistedBadge listed={poll.listed} />
             <StatusBadge status={poll.status} />
           </span>
@@ -103,7 +105,11 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
           </div>
         </section>
       ) : (
-        <RankChart ranking={poll.ranking} openUntil={poll.status === "open" ? poll.deadline : null} />
+        <RankChart
+          ranking={poll.ranking}
+          openUntil={poll.status === "open" ? poll.deadline : null}
+          multiple={poll.mode === "multiple"}
+        />
       )}
 
       {poll.codes && (

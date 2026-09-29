@@ -10,6 +10,7 @@ import { readVoterId } from "@/lib/voter-session";
 import { ArchiveIcon, ArrowLeftIcon, CheckIcon, ClockIcon } from "../../icons";
 import { ShareBar } from "../../share-bar";
 import { SharePanel } from "../../share-panel";
+import { ModeBadge } from "../../mode-badge";
 import { StatusBadge } from "../../status-badge";
 import { backLink, buttonSecondary, card, cardPadding } from "../../ui";
 import { VoteForm } from "./vote-form";
@@ -51,7 +52,7 @@ export default async function PollPage({ params, searchParams }: PageProps<"/pol
     );
   }
 
-  const myChoice = poll.options.find((option) => poll.myChoices.includes(option.id));
+  const myChoices = poll.options.filter((option) => poll.myChoices.includes(option.id));
   // A 참여 코드 poll takes several ballots from one device, one per code.
   const askForCode = poll.usesCodes && typeof code === "string";
   const url = await pollUrl(poll.id);
@@ -67,7 +68,10 @@ export default async function PollPage({ params, searchParams }: PageProps<"/pol
       <section className={`${card} ${cardPadding}`}>
         <div className="flex items-start justify-between gap-4">
           <h1 className="text-2xl font-bold leading-snug tracking-tight">{poll.question}</h1>
-          <StatusBadge status={poll.status} />
+          <span className="flex shrink-0 items-center gap-1.5">
+            <ModeBadge mode={poll.mode} maxChoices={poll.maxChoices} />
+            <StatusBadge status={poll.status} />
+          </span>
         </div>
         <p className="mt-2 flex items-center gap-1.5 text-sm text-zinc-500 dark:text-zinc-400">
           <ClockIcon className="size-4" />
@@ -109,17 +113,20 @@ export default async function PollPage({ params, searchParams }: PageProps<"/pol
                   <h2 className="font-semibold">결과</h2>
                   <span className="text-sm tabular-nums text-zinc-500">총 {poll.results.total}표</span>
                 </div>
-                <ShareBar results={poll.results} />
+                <ShareBar results={poll.results} mode={poll.mode} />
               </>
             )
-          ) : myChoice && !askForCode ? (
+          ) : myChoices.length > 0 && !askForCode ? (
             <div className="py-4 text-center">
               <span className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
                 <CheckIcon className="size-6" />
               </span>
               <p className="font-semibold">투표 완료</p>
               <p className="mt-1 text-zinc-600 dark:text-zinc-300">
-                당신의 선택: <strong className="text-zinc-900 dark:text-zinc-100">{myChoice.label}</strong>
+                당신의 선택:{" "}
+                <strong className="text-zinc-900 dark:text-zinc-100">
+                  {myChoices.map((option) => option.label).join(", ")}
+                </strong>
               </p>
               <p className="mt-4 text-sm text-zinc-500 dark:text-zinc-400">
                 결과는 투표가 마감되면 공개됩니다.
@@ -135,6 +142,8 @@ export default async function PollPage({ params, searchParams }: PageProps<"/pol
               pollId={poll.id}
               options={poll.options}
               usesCodes={poll.usesCodes}
+              mode={poll.mode}
+              maxChoices={poll.maxChoices}
               initialCode={typeof code === "string" ? code : ""}
             />
           )}

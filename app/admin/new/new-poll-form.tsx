@@ -51,6 +51,13 @@ export function NewPollForm({
   const [listed, setListed] = useState(template && !template.listed ? "false" : "true");
   const [startMode, setStartMode] = useState<"now" | "later">("now");
   const [usesCodes, setUsesCodes] = useState(template?.usesCodes ?? false);
+  const [mode, setMode] = useState(template?.mode ?? "single");
+  // "" means every option; kept as text so it survives adding or removing options.
+  const [maxChoices, setMaxChoices] = useState(
+    template?.mode === "multiple" && template.maxChoices < template.options.length
+      ? String(template.maxChoices)
+      : "",
+  );
   const [opensAt, setOpensAt] = useState(initialOpensAt);
   const errors = state.errors;
 
@@ -274,6 +281,59 @@ export function NewPollForm({
           <PlusIcon className="size-4" />
           선택지 추가
         </button>
+      </fieldset>
+
+      <fieldset className="flex flex-col gap-2">
+        <legend className={`${label} mb-2`}>투표 모드</legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {(
+            [
+              { value: "single", title: "단일 선택", body: "한 표에 선택지 하나를 고릅니다." },
+              { value: "multiple", title: "복수 선택", body: "한 표에 선택지를 여러 개 고를 수 있습니다." },
+            ] as const
+          ).map((choice) => (
+            <label
+              key={choice.value}
+              className="flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 px-4 py-3 transition has-checked:border-indigo-500 has-checked:bg-indigo-50/60 dark:border-zinc-700 dark:has-checked:border-indigo-400 dark:has-checked:bg-indigo-950/40"
+            >
+              <input
+                type="radio"
+                name="mode"
+                value={choice.value}
+                checked={mode === choice.value}
+                onChange={() => setMode(choice.value)}
+                className="mt-1 accent-indigo-600"
+              />
+              <span>
+                <span className="block text-sm font-semibold">{choice.title}</span>
+                <span className={`${hint} block`}>{choice.body}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        {mode === "multiple" && (
+          <label className="mt-1 flex items-center gap-2 text-sm">
+            최대 선택 수
+            <select
+              name="maxChoices"
+              value={maxChoices}
+              onChange={(event) => setMaxChoices(event.target.value)}
+              className={`${inputClass} w-auto`}
+            >
+              <option value="">전부 ({options.length}개)</option>
+              {Array.from({ length: Math.max(0, options.length - 2) }, (_, index) => index + 2).map(
+                (count) => (
+                  <option key={count} value={count}>
+                    {count}개
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+        )}
+        <p className={hint}>만든 뒤에는 투표 모드와 최대 선택 수를 바꿀 수 없습니다.</p>
+        {errors?.mode && <p className={fieldError}>{errors.mode}</p>}
+        {errors?.maxChoices && <p className={fieldError}>{errors.maxChoices}</p>}
       </fieldset>
 
       <button disabled={pending} className={`${buttonPrimary} w-full py-3 text-base`}>

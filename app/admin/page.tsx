@@ -5,6 +5,7 @@ import { formatDaysLeft, formatKst, formatRemaining } from "@/lib/kst-time";
 import { createPolls, type AdminListItem, type PollStatus } from "@/lib/polls";
 import { ChevronRightIcon, PlusIcon } from "../icons";
 import { UnlistedBadge } from "../listed-badge";
+import { ModeBadge } from "../mode-badge";
 import { StatusBadge } from "../status-badge";
 import { buttonPrimary, card } from "../ui";
 
@@ -146,6 +147,7 @@ function PollRow({
             <span className="truncate font-medium">{poll.question}</span>
             <StatusBadge status={status} />
             <UnlistedBadge listed={poll.listed} />
+            <ModeBadge mode={poll.mode} maxChoices={poll.maxChoices} />
           </span>
           <span className="mt-1 block text-sm text-zinc-500 dark:text-zinc-400">{when}</span>
           <span className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">

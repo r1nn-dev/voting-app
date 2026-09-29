@@ -709,6 +709,8 @@ describe("복제용 설정", () => {
       options: ["김밥", "라면", "돈가스"],
       listed: false,
       usesCodes: false,
+      mode: "single",
+      maxChoices: 1,
     });
   });
 
@@ -1068,6 +1070,152 @@ describe("참여 코드", () => {
   });
 });
 
+async function createMultiplePoll(maxChoices?: number | null, options = ["가", "나", "다", "라"]) {
+  const result = await polls.createPoll({
+    question: "좋아하는 과일 (복수)",
+    options,
+    deadline: at(DAY),
+    mode: "multiple",
+    maxChoices,
+  });
+  if (!result.ok) throw new Error(`투표 생성 실패: ${JSON.stringify(result.errors)}`);
+  return result.id;
+}
+
+describe("복수 선택", () => {
+  it("한 표에 여러 선택지를 담고, 내 선택은 선택지 순서로 전부다", async () => {
+    const id = await createMultiplePoll(3);
+    const [a, b, c] = await optionIds(id);
+
+    expect(await polls.castVote(id, [c, a], alice)).toEqual({ ok: true });
+
+    const view = await publicView(id, alice);
+    expect(view.myChoices).toEqual([a, c]);
+    expect(view).toMatchObject({ mode: "multiple", maxChoices: 3 });
+    expect(await polls.castVote(id, [b], alice)).toEqual({ ok: false, reason: "already_voted" });
+  });
+
+  it("최대 선택 수를 주지 않으면 선택지 개수다", async () => {
+    const id = await createMultiplePoll();
+
+    expect(await polls.getPollForAdmin(id)).toMatchObject({ mode: "multiple", maxChoices: 4 });
+    expect(await polls.castVote(id, await optionIds(id), alice)).toEqual({ ok: true });
+  });
+
+  it("0개, 최대 초과, 중복 선택지, 다른 투표의 선택지는 invalid_choice다", async () => {
+    const id = await createMultiplePoll(2);
+    const [a, b, c] = await optionIds(id);
+    const [foreign] = await optionIds(await createOpenPoll("다른 투표"));
+
+    for (const choice of [[], [a, b, c], [a, a], [a, foreign]]) {
+      expect(await polls.castVote(id, choice, alice)).toEqual({ ok: false, reason: "invalid_choice" });
+    }
+    expect((await polls.getPollForAdmin(id))?.ranking.summary.total).toBe(0);
+    expect(await polls.castVote(id, [a, b], alice)).toEqual({ ok: true });
+  });
+
+  it("최대 선택 수 검사는 코드를 소모하기 전에 한다", async () => {
+    const created = await polls.createPoll({
+      question: "q",
+      options: ["a", "b", "c"],
+      deadline: at(DAY),
+      mode: "multiple",
+      maxChoices: 2,
+      codeCount: 1,
+    });
+    if (!created.ok) throw new Error("투표 생성 실패");
+    const [{ code }] = await codesOf(created.id);
+
+    expect(await polls.castVote(created.id, await optionIds(created.id), alice, code)).toEqual({
+      ok: false,
+      reason: "invalid_choice",
+    });
+    expect((await codesOf(created.id))[0].used).toBe(false);
+  });
+
+  it("생성 검증: 최대 선택 수는 2~선택지 개수, 단일 선택에는 둘 수 없다", async () => {
+    const attempts = [
+      { mode: "multiple" as const, maxChoices: 1 },
+      { mode: "multiple" as const, maxChoices: 4 },
+      { mode: "multiple" as const, maxChoices: 2.5 },
+      { mode: "single" as const, maxChoices: 2 },
+    ];
+    for (const attempt of attempts) {
+      const result = await polls.createPoll({
+        question: "q",
+        options: ["a", "b", "c"],
+        deadline: at(DAY),
+        ...attempt,
+      });
+      expect(result).toMatchObject({ ok: false, errors: { maxChoices: expect.any(String) } });
+    }
+    const unknown = await polls.createPoll({
+      question: "q",
+      options: ["a", "b"],
+      deadline: at(DAY),
+      mode: "ranked" as never,
+    });
+    expect(unknown).toMatchObject({ ok: false, errors: { mode: expect.any(String) } });
+    expect(await polls.listPolls()).toEqual({ scheduled: [], open: [], closed: [] });
+  });
+
+  it("결과 비율은 표 대비라서 합이 100%를 넘고, 1위 동점도 표시한다", async () => {
+    const id = await createMultiplePoll(3, ["a", "b", "c"]);
+    const [a, b, c] = await optionIds(id);
+    await polls.castVote(id, [a, b], alice);
+    await polls.castVote(id, [a, b, c], bob);
+    await polls.castVote(id, [c], voters[2]);
+    await polls.closePoll(id);
+
+    const view = await polls.getPollForVoter(id, alice);
+    if (view?.status !== "closed") throw new Error("마감 아님");
+
+    expect(view.results.total).toBe(3);
+    expect(
+      view.results.options.map((option) => [option.label, option.votes, option.percent, option.isTop, option.isMine]),
+    ).toEqual([
+      ["a", 2, 66.7, true, true],
+      ["b", 2, 66.7, true, true],
+      ["c", 2, 66.7, true, false],
+    ]);
+  });
+
+  it("순위와 격차는 표 대비 %p다", async () => {
+    const id = await createMultiplePoll(2, ["a", "b", "c"]);
+    const [a, b, c] = await optionIds(id);
+    await polls.castVote(id, [a, b], alice);
+    await polls.castVote(id, [a, c], bob);
+    await polls.castVote(id, [a], voters[2]);
+    await polls.castVote(id, [b], voters[3]);
+
+    const ranking = (await polls.getPollForAdmin(id))?.ranking;
+
+    // a is in 3 of 4 표 (75%), b in 2 (50%): 1 vote and 25%p apart.
+    expect(ranking?.options.map((option) => [option.label, option.rank, option.votes, option.percent])).toEqual([
+      ["a", 1, 3, 75],
+      ["b", 2, 2, 50],
+      ["c", 3, 1, 25],
+    ]);
+    expect(ranking?.summary).toMatchObject({
+      kind: "decided",
+      total: 4,
+      gap: { votes: 1, percentPoints: 25 },
+    });
+  });
+
+  it("관리 목록, 결과 CSV, 복제용 설정에 모드가 담긴다", async () => {
+    const id = await createMultiplePoll(2);
+    const [a, b] = await optionIds(id);
+    await polls.castVote(id, [a, b], alice);
+
+    const { open } = await polls.listPollsForAdmin();
+    expect(open[0]).toMatchObject({ id, mode: "multiple", maxChoices: 2, total: 1 });
+    expect(await polls.resultsCsv(id)).toContain("\r\n투표 모드,복수 선택 (최대 2개)\r\n");
+    expect(await polls.resultsCsv(await createOpenPoll())).toContain("\r\n투표 모드,단일 선택\r\n");
+    expect((await polls.getPollForAdmin(id))?.template).toMatchObject({ mode: "multiple", maxChoices: 2 });
+  });
+});
+
 describe("deletePoll", () => {
   it("표가 있는 투표를 지우면 어디서도 조회되지 않고, 다른 투표는 그대로다", async () => {
     const doomed = await createOpenPoll("지울 투표");
@@ -1194,6 +1342,8 @@ describe("createPoll", () => {
       status: "open",
       myChoices: [],
       usesCodes: false,
+      mode: "single",
+      maxChoices: 1,
     });
     expect(poll?.options.map((option) => option.label)).toEqual(["김밥", "라면", "돈가스"]);
   });

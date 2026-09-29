@@ -32,6 +32,12 @@ export async function createPollAction(
         ? (parseKstInput(formData.get("opensAt")) ?? new Date(Number.NaN))
         : null,
     listed: formData.get("listed") !== "false",
+    mode: formData.get("mode") === "multiple" ? "multiple" : "single",
+    // Empty means every option; only 복수 선택 sends the field.
+    maxChoices:
+      formData.get("mode") === "multiple" && formData.get("maxChoices")
+        ? Number(formData.get("maxChoices"))
+        : null,
     // Unchecked sends nothing; a checked box with no usable count fails validation.
     codeCount: formData.get("usesCodes") === "on" ? Number(formData.get("codeCount") || Number.NaN) : 0,
   });
