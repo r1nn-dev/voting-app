@@ -15,14 +15,17 @@ const itemActive = "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-10
  * the session on the server.
  */
 export function HeaderNav({ signedIn }: { signedIn: boolean }) {
-  const inAdmin = usePathname().startsWith("/admin");
+  const pathname = usePathname();
+  const inAdmin = pathname.startsWith("/admin");
+  // Help and terms pages belong to neither section.
+  const inPolls = pathname === "/" || pathname.startsWith("/polls");
 
   return (
     <nav className="flex items-center gap-1">
       <Link
         href="/"
-        aria-current={inAdmin ? undefined : "page"}
-        className={`${itemBase} ${inAdmin ? itemIdle : itemActive}`}
+        aria-current={inPolls ? "page" : undefined}
+        className={`${itemBase} ${inPolls ? itemActive : itemIdle}`}
       >
         투표 목록
       </Link>

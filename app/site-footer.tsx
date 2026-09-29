@@ -6,11 +6,11 @@ export const SERVICE_NAME = "한표";
 export const SERVICE_TAGLINE = "질문 하나, 선택지 하나. 가볍게 던지는 한 표";
 
 const MAKER = "조하린";
-const REPOSITORY = "github.com/r1nn-dev/voting-app";
+export const REPOSITORY = "github.com/r1nn-dev/voting-app";
 
 const LINKS = [
-  { label: "투표 목록", href: "/" },
-  { label: "관리자", href: "/admin" },
+  { label: "도움말", href: "/help" },
+  { label: "이용약관", href: "/terms" },
   { label: "GitHub 저장소", href: `https://${REPOSITORY}`, external: true },
 ];
 
