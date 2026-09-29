@@ -21,9 +21,18 @@ type SamplePoll = {
   createdAgo?: number;
   /** 링크 전용 when false. */
   listed?: boolean;
+  /** 시작 예정 시각 relative to now; missing means it started when created. */
+  opensIn?: number;
 };
 
 const SAMPLE_POLLS: SamplePoll[] = [
+  {
+    question: "다음 학기 스터디 주제는 무엇이 좋을까요?",
+    options: ["알고리즘", "웹 개발", "데이터 분석", "영어 회화"],
+    votes: [0, 0, 0, 0],
+    opensIn: 5 * HOUR,
+    deadlineIn: 3 * DAY,
+  },
   {
     question: "(링크 전용) 동아리 회식 날짜는 언제가 좋을까요?",
     options: ["금요일 저녁", "토요일 점심", "토요일 저녁"],
@@ -103,8 +112,12 @@ for (const [index, poll] of [...SAMPLE_POLLS].reverse().entries()) {
   const deadline = new Date(now + poll.deadlineIn);
   const closedAt = poll.closedAgo === undefined ? null : new Date(now - poll.closedAgo);
   await sql`
-    INSERT INTO polls (id, question, created_at, deadline, closed_at, listed)
-    VALUES (${id}, ${poll.question}, ${createdAt}, ${deadline}, ${closedAt}, ${poll.listed ?? true})
+    INSERT INTO polls (id, question, created_at, opens_at, deadline, closed_at, listed)
+    VALUES (
+      ${id}, ${poll.question}, ${createdAt},
+      ${poll.opensIn === undefined ? createdAt : new Date(now + poll.opensIn)},
+      ${deadline}, ${closedAt}, ${poll.listed ?? true}
+    )
   `;
   const optionRows = (await sql`
     INSERT INTO options (poll_id, label, position)

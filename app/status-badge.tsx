@@ -1,6 +1,12 @@
 import type { PollStatus } from "@/lib/polls";
 
 const BADGES: Record<PollStatus, { label: string; className: string; dot: string }> = {
+  scheduled: {
+    label: "시작 전",
+    className:
+      "bg-violet-50 text-violet-700 ring-violet-600/20 dark:bg-violet-950/60 dark:text-violet-300 dark:ring-violet-400/20",
+    dot: "bg-violet-500",
+  },
   open: {
     label: "진행 중",
     className:

@@ -3,12 +3,18 @@ import type { Sql } from "./db";
 import { formatKst } from "./kst-time";
 import { POLL_LIMITS } from "./poll-limits";
 
-/** open → closed (by hand or deadline) → archived (30 days after 마감 시각). */
-export type PollStatus = "open" | "closed" | "archived";
+/** scheduled → open → closed (by hand or deadline) → archived (30 days after 마감 시각). */
+export type PollStatus = "scheduled" | "open" | "closed" | "archived";
 
 /** A poll's state as every list sees it; only closed and archived polls have a 마감 시각. */
-type PollSummary = { id: string; question: string; deadline: Date; listed: boolean } & (
-  | { status: "open" }
+type PollSummary = {
+  id: string;
+  question: string;
+  opensAt: Date;
+  deadline: Date;
+  listed: boolean;
+} & (
+  | { status: "scheduled" | "open" }
   | { status: "closed" | "archived"; closedAt: Date; archivesAt: Date }
 );
 
@@ -33,6 +39,7 @@ export type VoteTally = { total: number; options: OptionTally[] };
 export type AdminListItem = {
   id: string;
   question: string;
+  opensAt: Date;
   deadline: Date;
   /** 목록 공개 (true) or 링크 전용 (false). */
   listed: boolean;
@@ -42,6 +49,8 @@ export type AdminListItem = {
 };
 
 export type AdminPollList = {
+  /** 시작 전, by nearest 시작 예정 시각. */
+  scheduled: AdminListItem[];
   /** By nearest deadline. */
   open: AdminListItem[];
   /** Closed and still public, by latest 마감 시각; `archivesAt` is when it becomes 보관. */
@@ -73,12 +82,17 @@ type VoterPollBase = {
  * (ADR-0002). An archived poll carries nothing but its id.
  */
 export type VoterPoll =
+  | (VoterPollBase & { status: "scheduled"; opensAt: Date; deadline: Date })
   | (VoterPollBase & { status: "open"; deadline: Date })
   | (VoterPollBase & { status: "closed"; closedAt: Date; results: ShareResults })
   | { id: string; status: "archived" };
 
-/** The public list: open polls by nearest deadline, closed ones by latest 마감 시각. Archived polls are left out. */
+/**
+ * The public list: 시작 전 polls by nearest 시작 예정 시각, open ones by nearest
+ * deadline, closed ones by latest 마감 시각. Archived and 링크 전용 polls are left out.
+ */
 export type PublicPollList = {
+  scheduled: { id: string; question: string; opensAt: Date }[];
   open: { id: string; question: string; deadline: Date }[];
   closed: { id: string; question: string; closedAt: Date }[];
 };
@@ -88,12 +102,15 @@ export type CreatePollInput = {
   question: string;
   options: string[];
   deadline: Date | null;
+  /** 시작 예정 시각; missing or null starts the poll right away. */
+  opensAt?: Date | null;
   /** 목록 공개 unless false (링크 전용). */
   listed?: boolean;
 };
 
 export type CreatePollErrors = {
   question?: string;
+  opensAt?: string;
   deadline?: string;
   /** Problem with the option list as a whole (count). */
   options?: string;
@@ -131,6 +148,7 @@ export type AdminPoll = {
   question: string;
   status: PollStatus;
   listed: boolean;
+  opensAt: Date;
   deadline: Date;
   /** 마감 시각; null while open. */
   closedAt: Date | null;
@@ -142,11 +160,25 @@ export type AdminPoll = {
 
 export type PollTemplate = { question: string; options: string[]; listed: boolean };
 
-export type ExtendDeadlineFailure = "not_found" | "closed" | "not_later" | "out_of_range";
+export type ExtendDeadlineFailure =
+  | "not_found"
+  | "not_started"
+  | "closed"
+  | "not_later"
+  | "out_of_range";
+
+export type RescheduleFailure = "not_found" | "started" | "out_of_range";
+
+export type RescheduleResult = { ok: true } | { ok: false; reason: RescheduleFailure };
 
 export type ExtendDeadlineResult = { ok: true } | { ok: false; reason: ExtendDeadlineFailure };
 
-export type CastVoteFailure = "not_found" | "closed" | "already_voted" | "invalid_option";
+export type CastVoteFailure =
+  | "not_found"
+  | "not_started"
+  | "closed"
+  | "already_voted"
+  | "invalid_option";
 
 export type CastVoteResult = { ok: true } | { ok: false; reason: CastVoteFailure };
 
@@ -160,6 +192,7 @@ type PollsOptions = {
 
 type PollStateRow = {
   status: PollStatus;
+  opens_at: Date;
   deadline: Date;
   closed_at: Date | null;
   archives_at: Date | null;
@@ -174,19 +207,37 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   const readClock = (): Instant =>
     sql`coalesce(${now ? now().toISOString() : null}::timestamptz, now())`;
   const isClosed = (at: Instant) => sql`(p.closed_at IS NOT NULL OR p.deadline <= ${at})`;
+  const hasStarted = (at: Instant) => sql`(p.opens_at <= ${at})`;
+  /** 진행 중: started and not closed, the only state that takes votes. */
+  const acceptsVotes = (at: Instant) => sql`(${hasStarted(at)} AND NOT ${isClosed(at)})`;
   const pollState = (at: Instant) => sql`
     CASE
+      WHEN NOT ${isClosed(at)} AND NOT ${hasStarted(at)} THEN 'scheduled'
       WHEN NOT ${isClosed(at)} THEN 'open'
       WHEN least(p.closed_at, p.deadline) + ${`${POLL_LIMITS.publicDays} days`}::interval <= ${at}
         THEN 'archived'
       ELSE 'closed'
     END AS status,
+    p.opens_at,
     p.deadline,
     CASE WHEN ${isClosed(at)} THEN least(p.closed_at, p.deadline) END AS closed_at,
     CASE WHEN ${isClosed(at)}
       THEN least(p.closed_at, p.deadline) + ${`${POLL_LIMITS.publicDays} days`}::interval
     END AS archives_at
   `;
+
+  /**
+   * 시작 예정 시각 within 30 days from now; 마감 예정 시각 10 minutes to 30 days
+   * after the 시작 예정 시각 (ADR-0006). Both as SQL booleans on the same clock.
+   */
+  function scheduleRanges(at: Instant, opens: Instant, deadline: Instant) {
+    const minutes = `${POLL_LIMITS.deadlineMinMinutes} minutes`;
+    const days = `${POLL_LIMITS.deadlineMaxDays} days`;
+    return {
+      opensOk: sql`(${opens} BETWEEN ${at} AND ${at} + ${days}::interval)`,
+      deadlineOk: sql`(${deadline} BETWEEN ${opens} + ${minutes}::interval AND ${opens} + ${days}::interval)`,
+    };
+  }
 
   /** Every poll with its state, newest first. */
   async function listAll(): Promise<PollSummary[]> {
@@ -197,17 +248,21 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       ORDER BY p.created_at DESC, p.id DESC
     `) as ({ id: string; question: string; listed: boolean } & PollStateRow)[];
     // closed_at and archives_at are set exactly when the poll is not open (pollState).
-    return rows.map(({ id, question, listed, status, deadline, closed_at, archives_at }) =>
-      status === "open"
-        ? { id, question, deadline, listed, status }
-        : { id, question, deadline, listed, status, closedAt: closed_at!, archivesAt: archives_at! },
-    );
+    return rows.map(({ id, question, listed, status, opens_at, deadline, closed_at, archives_at }) => {
+      const base = { id, question, opensAt: opens_at, deadline, listed };
+      return status === "scheduled" || status === "open"
+        ? { ...base, status }
+        : { ...base, status, closedAt: closed_at!, archivesAt: archives_at! };
+    });
   }
 
   /** 링크 전용 polls never appear here, whatever their state. */
   async function listPolls(): Promise<PublicPollList> {
-    const { open, closed } = groupByStatus((await listAll()).filter((poll) => poll.listed));
+    const { scheduled, open, closed } = groupByStatus(
+      (await listAll()).filter((poll) => poll.listed),
+    );
     return {
+      scheduled: scheduled.map(({ id, question, opensAt }) => ({ id, question, opensAt })),
       open: open.map(({ id, question, deadline }) => ({ id, question, deadline })),
       closed: closed.map(({ id, question, closedAt }) => ({ id, question, closedAt })),
     };
@@ -216,20 +271,21 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   async function createPoll(input: CreatePollInput): Promise<CreatePollResult> {
     const question = input.question.trim();
     const options = input.options.map((option) => option.trim());
-    const errors = validatePoll(question, options, input.deadline);
+    const errors = validatePoll(question, options, input.deadline, input.opensAt ?? null);
     if (errors || !input.deadline) return { ok: false, errors: errors ?? {} };
 
     const id = newPollId();
     const at = readClock();
-    // One statement, so a poll can never exist without its options. The
-    // deadline range is checked here, against the same "now" as every judgement.
+    const opens = sql`coalesce(${input.opensAt?.toISOString() ?? null}::timestamptz, ${at})`;
+    const deadline = sql`${input.deadline.toISOString()}::timestamptz`;
+    const ranges = scheduleRanges(at, opens, deadline);
+    // One statement, so a poll can never exist without its options. The time
+    // ranges are checked here, against the same "now" as every judgement.
     const inserted = await sql`
       WITH poll AS (
-        INSERT INTO polls (id, question, deadline, listed)
-        SELECT ${id}, ${question}, ${input.deadline.toISOString()}::timestamptz, ${input.listed ?? true}
-        WHERE ${input.deadline.toISOString()}::timestamptz
-          BETWEEN ${at} + ${`${POLL_LIMITS.deadlineMinMinutes} minutes`}::interval
-              AND ${at} + ${`${POLL_LIMITS.deadlineMaxDays} days`}::interval
+        INSERT INTO polls (id, question, opens_at, deadline, listed)
+        SELECT ${id}, ${question}, ${opens}, ${deadline}, ${input.listed ?? true}
+        WHERE ${ranges.opensOk} AND ${ranges.deadlineOk}
         RETURNING id
       )
       INSERT INTO options (poll_id, label, position)
@@ -238,11 +294,17 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       RETURNING 1
     `;
     if (inserted.length === 0) {
+      // Only explains the refusal; the INSERT above already decided.
+      const [check] = (await sql`
+        SELECT ${ranges.opensOk} AS opens_ok
+      `) as { opens_ok: boolean }[];
       return {
         ok: false,
-        errors: {
-          deadline: `마감 예정 시각은 지금부터 ${POLL_LIMITS.deadlineMinMinutes}분 뒤 ~ ${POLL_LIMITS.deadlineMaxDays}일 뒤 사이여야 합니다.`,
-        },
+        errors: check.opens_ok
+          ? {
+              deadline: `마감 예정 시각은 시작 예정 시각부터 ${POLL_LIMITS.deadlineMinMinutes}분 뒤 ~ ${POLL_LIMITS.deadlineMaxDays}일 뒤 사이여야 합니다.`,
+            }
+          : { opensAt: `시작 예정 시각은 지금부터 ${POLL_LIMITS.deadlineMaxDays}일 이내여야 합니다.` },
       };
     }
     return { ok: true, id };
@@ -264,11 +326,13 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
 
     const base = { id: poll.id, question: poll.question, myChoice: poll.my_choice };
 
-    if (poll.status === "open") {
+    if (poll.status === "scheduled" || poll.status === "open") {
       const options = (await sql`
         SELECT id::text AS id, label FROM options WHERE poll_id = ${pollId} ORDER BY position
       `) as PollOption[];
-      return { ...base, options, status: "open", deadline: poll.deadline };
+      return poll.status === "scheduled"
+        ? { ...base, options, status: "scheduled", opensAt: poll.opens_at, deadline: poll.deadline }
+        : { ...base, options, status: "open", deadline: poll.deadline };
     }
 
     const tally = computeTally((await countVotes(pollId)).get(pollId) ?? []);
@@ -279,13 +343,22 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
 
   /** The admin list in three groups, each row with its total and current leaders, before close too. */
   async function listPollsForAdmin(): Promise<AdminPollList> {
-    const { open, closed, archived } = groupByStatus(await listAll());
+    const { scheduled, open, closed, archived } = groupByStatus(await listAll());
     const votesByPoll = await countVotes(null);
-    const item = ({ id, question, deadline, listed }: PollSummary): AdminListItem => {
+    const item = ({ id, question, opensAt, deadline, listed }: PollSummary): AdminListItem => {
       const tally = computeTally(votesByPoll.get(id) ?? []);
-      return { id, question, deadline, listed, total: tally.total, leaders: leadersOf(tally) };
+      return {
+        id,
+        question,
+        opensAt,
+        deadline,
+        listed,
+        total: tally.total,
+        leaders: leadersOf(tally),
+      };
     };
     return {
+      scheduled: scheduled.map(item),
       open: open.map(item),
       closed: closed.map((poll) => ({
         ...item(poll),
@@ -317,16 +390,22 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
    * Irreversible (ADR-0002). Closing an already closed poll succeeds and keeps
    * its 마감 시각, including one whose deadline has already passed.
    */
-  async function closePoll(pollId: string): Promise<{ ok: true } | { ok: false; reason: "not_found" }> {
+  async function closePoll(
+    pollId: string,
+  ): Promise<{ ok: true } | { ok: false; reason: "not_found" | "not_started" }> {
     const at = readClock();
     const [closed] = await sql`
       UPDATE polls p SET closed_at = ${at}
-      WHERE p.id = ${pollId} AND NOT ${isClosed(at)}
+      WHERE p.id = ${pollId} AND ${acceptsVotes(at)}
       RETURNING 1
     `;
     if (closed) return { ok: true };
-    const [poll] = await sql`SELECT 1 FROM polls WHERE id = ${pollId}`;
-    return poll ? { ok: true } : { ok: false, reason: "not_found" };
+    // A 시작 전 poll is deleted, not closed (CONTEXT.md).
+    const [poll] = (await sql`
+      SELECT ${hasStarted(at)} AS started FROM polls p WHERE p.id = ${pollId}
+    `) as { started: boolean }[];
+    if (!poll) return { ok: false, reason: "not_found" };
+    return poll.started ? { ok: true } : { ok: false, reason: "not_started" };
   }
 
   /** The admin sees every poll whatever its state. */
@@ -345,6 +424,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       question: poll.question,
       status: poll.status,
       listed: poll.listed,
+      opensAt: poll.opens_at,
       deadline: poll.deadline,
       closedAt: poll.closed_at,
       ranking: computeRanking(votes),
@@ -367,6 +447,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     const rows: (string | number)[][] = [
       ["질문", poll.question],
       ["상태", STATUS_LABELS[poll.status]],
+      ["시작 예정 시각", formatKst(poll.opensAt)],
       ["마감 예정 시각", formatKst(poll.deadline)],
       ["마감 시각", poll.closedAt ? formatKst(poll.closedAt) : ""],
       ["총 표 수", summary.total],
@@ -387,7 +468,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     const [extended] = await sql`
       UPDATE polls p SET deadline = ${deadline}::timestamptz
       WHERE p.id = ${pollId}
-        AND NOT ${isClosed(at)}
+        AND ${acceptsVotes(at)}
         AND ${deadline}::timestamptz > p.deadline
         AND ${deadline}::timestamptz <= ${at} + ${`${POLL_LIMITS.deadlineMaxDays} days`}::interval
       RETURNING 1
@@ -398,13 +479,66 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     // In production this reads now() again, so a poll that closed in between
     // is reported as closed, which is still a true reason.
     const [poll] = (await sql`
-      SELECT ${isClosed(at)} AS is_closed, ${deadline}::timestamptz > p.deadline AS is_later
+      SELECT
+        ${isClosed(at)} AS is_closed,
+        ${hasStarted(at)} AS started,
+        ${deadline}::timestamptz > p.deadline AS is_later
       FROM polls p
       WHERE p.id = ${pollId}
-    `) as { is_closed: boolean; is_later: boolean }[];
+    `) as { is_closed: boolean; started: boolean; is_later: boolean }[];
     if (!poll) return { ok: false, reason: "not_found" };
     if (poll.is_closed) return { ok: false, reason: "closed" };
+    if (!poll.started) return { ok: false, reason: "not_started" };
     return { ok: false, reason: poll.is_later ? "out_of_range" : "not_later" };
+  }
+
+  /**
+   * Moves a 시작 전 poll's 시작 예정 시각 and 마감 예정 시각, earlier or later;
+   * `opensAt` of now starts it right away. Allowed only before it starts, when
+   * no vote exists yet (CONTEXT.md). One conditional statement.
+   */
+  async function reschedule(
+    pollId: string,
+    times: { opensAt: Date; deadline: Date },
+  ): Promise<RescheduleResult> {
+    const at = readClock();
+    const opens = sql`${times.opensAt.toISOString()}::timestamptz`;
+    const deadline = sql`${times.deadline.toISOString()}::timestamptz`;
+    const ranges = scheduleRanges(at, opens, deadline);
+    const [moved] = await sql`
+      UPDATE polls p SET opens_at = ${opens}, deadline = ${deadline}
+      WHERE p.id = ${pollId}
+        AND NOT ${hasStarted(at)}
+        AND NOT ${isClosed(at)}
+        AND ${ranges.opensOk}
+        AND ${ranges.deadlineOk}
+      RETURNING 1
+    `;
+    if (moved) return { ok: true };
+
+    // Only explains the refusal; the UPDATE above already decided.
+    const [poll] = (await sql`
+      SELECT (${hasStarted(at)} OR ${isClosed(at)}) AS started FROM polls p WHERE p.id = ${pollId}
+    `) as { started: boolean }[];
+    if (!poll) return { ok: false, reason: "not_found" };
+    return { ok: false, reason: poll.started ? "started" : "out_of_range" };
+  }
+
+  /**
+   * "지금 바로 시작": sets the 시작 예정 시각 to the database's now, so an app
+   * clock slightly behind can never make it look like the past (ADR-0006). The
+   * deadline stays: it is already more than 10 minutes after the old start.
+   */
+  async function startNow(pollId: string): Promise<{ ok: true } | { ok: false; reason: "not_found" | "started" }> {
+    const at = readClock();
+    const [started] = await sql`
+      UPDATE polls p SET opens_at = ${at}
+      WHERE p.id = ${pollId} AND NOT ${hasStarted(at)} AND NOT ${isClosed(at)}
+      RETURNING 1
+    `;
+    if (started) return { ok: true };
+    const [poll] = await sql`SELECT 1 FROM polls WHERE id = ${pollId}`;
+    return { ok: false, reason: poll ? "started" : "not_found" };
   }
 
   /** 목록 공개 ↔ 링크 전용, in any state: it changes exposure, not the poll's content. */
@@ -435,7 +569,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
         INSERT INTO votes (poll_id, option_id, voter_id)
         SELECT p.id, ${optionId}::bigint, ${voterId}::uuid
         FROM polls p
-        WHERE p.id = ${pollId} AND NOT ${isClosed(at)}
+        WHERE p.id = ${pollId} AND ${acceptsVotes(at)}
         RETURNING 1
       `;
     } catch (error) {
@@ -446,8 +580,11 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     }
     if (inserted.length > 0) return { ok: true };
 
-    const [poll] = await sql`SELECT 1 FROM polls WHERE id = ${pollId}`;
-    return { ok: false, reason: poll ? "closed" : "not_found" };
+    const [poll] = (await sql`
+      SELECT ${hasStarted(at)} AS started FROM polls p WHERE p.id = ${pollId}
+    `) as { started: boolean }[];
+    if (!poll) return { ok: false, reason: "not_found" };
+    return { ok: false, reason: poll.started ? "closed" : "not_started" };
   }
 
   return {
@@ -456,6 +593,8 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     getPollForAdmin,
     extendDeadline,
     setListed,
+    reschedule,
+    startNow,
     resultsCsv,
     createPoll,
     getPollForVoter,
@@ -466,6 +605,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
 }
 
 const STATUS_LABELS: Record<PollStatus, string> = {
+  scheduled: "시작 전",
   open: "진행 중",
   closed: "마감",
   archived: "보관",
@@ -484,15 +624,21 @@ function leadersOf(tally: VoteTally): PollOption[] {
 
 type Closed = Extract<PollSummary, { closedAt: Date }>;
 
-/** Open by nearest deadline; closed and archived by latest 마감 시각. Sorts are stable. */
+/**
+ * 시작 전 by nearest 시작 예정 시각, open by nearest deadline, closed and
+ * archived by latest 마감 시각. Sorts are stable.
+ */
 function groupByStatus(polls: PollSummary[]) {
+  const scheduled = polls
+    .filter((poll) => poll.status === "scheduled")
+    .toSorted((a, b) => a.opensAt.getTime() - b.opensAt.getTime());
   const open = polls
-    .filter((poll): poll is Extract<PollSummary, { status: "open" }> => poll.status === "open")
+    .filter((poll) => poll.status === "open")
     .toSorted((a, b) => a.deadline.getTime() - b.deadline.getTime());
   const byLatestClose = (a: Closed, b: Closed) => b.closedAt.getTime() - a.closedAt.getTime();
   const closedIn = (status: Closed["status"]) =>
     polls.filter((poll): poll is Closed => poll.status === status).toSorted(byLatestClose);
-  return { open, closed: closedIn("closed"), archived: closedIn("archived") };
+  return { scheduled, open, closed: closedIn("closed"), archived: closedIn("archived") };
 }
 
 function computeTally(options: OptionVotes[]): VoteTally {
@@ -555,9 +701,12 @@ function validatePoll(
   question: string,
   options: string[],
   deadline: Date | null,
+  opensAt: Date | null,
 ): CreatePollErrors | null {
   const { questionMaxLength, optionMaxLength, minOptions, maxOptions } = POLL_LIMITS;
   const errors: CreatePollErrors = {};
+
+  if (opensAt && Number.isNaN(opensAt.getTime())) errors.opensAt = "시작 예정 시각이 올바르지 않습니다.";
 
   if (!deadline || Number.isNaN(deadline.getTime()))
     errors.deadline = "마감 예정 시각을 입력하세요.";

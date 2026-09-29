@@ -16,7 +16,9 @@ export default async function PresentQrPage({ params }: PageProps<"/admin/polls/
   const url = await pollUrl(poll.id);
   const qr = await qrSvg(url);
   const when =
-    poll.status === "open"
+    poll.status === "scheduled"
+      ? `${formatKst(poll.opensAt)}에 시작합니다`
+      : poll.status === "open"
       ? `${formatKst(poll.deadline)} 마감 · ${formatRemaining(poll.deadline)} 남음`
       : poll.status === "closed"
         ? "마감된 투표입니다 · 결과를 볼 수 있어요"

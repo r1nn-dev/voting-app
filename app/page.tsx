@@ -11,7 +11,7 @@ const SOON_MS = 24 * 60 * 60 * 1000;
 
 export default async function Home() {
   await connection();
-  const { open, closed } = await createPolls(getSql()).listPolls();
+  const { scheduled, open, closed } = await createPolls(getSql()).listPolls();
 
   return (
     <div className="flex flex-col gap-12">
@@ -41,6 +41,20 @@ export default async function Home() {
           );
         })}
       </PollSection>
+
+      {scheduled.length > 0 && (
+        <PollSection title="시작 예정" count={scheduled.length} empty="">
+          {scheduled.map((poll) => (
+            <PollRow key={poll.id} id={poll.id} question={poll.question} status="scheduled">
+              <span className="inline-flex items-center gap-1">
+                <ClockIcon className="size-3.5" />
+                {formatRemaining(poll.opensAt)} 후 시작
+              </span>
+              <span className="hidden sm:inline">· {formatKst(poll.opensAt)} 시작 예정</span>
+            </PollRow>
+          ))}
+        </PollSection>
+      )}
 
       <PollSection title="마감된 투표" count={closed.length} empty="아직 마감된 투표가 없습니다.">
         {closed.map((poll) => (
@@ -96,7 +110,7 @@ function PollRow({
 }: {
   id: string;
   question: string;
-  status: "open" | "closed";
+  status: "scheduled" | "open" | "closed";
   children: React.ReactNode;
 }) {
   return (

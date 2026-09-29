@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/admin-session";
 import { getSql } from "@/lib/db";
-import { formatKst, formatRemaining } from "@/lib/kst-time";
+import { formatKst, formatRemaining, toKstInputValue } from "@/lib/kst-time";
 import { POLL_LIMITS } from "@/lib/poll-limits";
 import { createPolls } from "@/lib/polls";
 import { pollUrl, qrSvg } from "@/lib/share";
@@ -16,8 +16,10 @@ import {
   closePollAction,
   deletePollAndReturnToListAction,
   setListedAction,
+  startNowAction,
 } from "../../poll-actions";
 import { ExtendDeadlineForm } from "./extend-deadline-form";
+import { RescheduleForm } from "./reschedule-form";
 import { RankChart } from "./rank-chart";
 
 export default async function AdminPollPage({ params }: PageProps<"/admin/polls/[id]">) {
@@ -45,9 +47,11 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
         </div>
         <p className="mt-2 flex items-center gap-1.5 text-sm text-zinc-500 dark:text-zinc-400">
           <ClockIcon className="size-4" />
-          {poll.status === "open" || !poll.closedAt
-            ? `${formatKst(poll.deadline)} 마감 예정 · ${formatRemaining(poll.deadline)} 남음`
-            : `${formatKst(poll.closedAt)} 마감됨`}
+          {poll.status === "scheduled"
+            ? `${formatKst(poll.opensAt)} 시작 예정 · ${formatKst(poll.deadline)} 마감 예정`
+            : poll.status === "open" || !poll.closedAt
+              ? `${formatKst(poll.deadline)} 마감 예정 · ${formatRemaining(poll.deadline)} 남음`
+              : `${formatKst(poll.closedAt)} 마감됨`}
         </p>
         <div className="mt-4 flex flex-wrap items-start gap-2">
           <Link href={`/polls/${poll.id}`} className={buttonSecondary}>
@@ -74,7 +78,32 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
         )}
       </section>
 
-      <RankChart ranking={poll.ranking} openUntil={poll.status === "open" ? poll.deadline : null} />
+      {poll.status === "scheduled" ? (
+        <section className={`${card} ${cardPadding}`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">시작 전</h2>
+              <p className={`${hint} mt-1`}>
+                {formatRemaining(poll.opensAt)} 후 시작합니다. 시작 전에는 표를 받지 않습니다.
+              </p>
+            </div>
+            <form action={startNowAction}>
+              <input type="hidden" name="pollId" value={poll.id} />
+              <button className={buttonSecondary}>지금 바로 시작</button>
+            </form>
+          </div>
+          <div className="mt-5 border-t border-zinc-100 pt-5 dark:border-zinc-800">
+            <RescheduleForm
+              key={`${poll.opensAt.toISOString()}-${poll.deadline.toISOString()}`}
+              pollId={poll.id}
+              opensAt={toKstInputValue(poll.opensAt)}
+              deadline={toKstInputValue(poll.deadline)}
+            />
+          </div>
+        </section>
+      ) : (
+        <RankChart ranking={poll.ranking} openUntil={poll.status === "open" ? poll.deadline : null} />
+      )}
 
       {poll.status === "open" && (
         <section className={`${card} ${cardPadding}`}>
@@ -95,7 +124,11 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
         <div>
           <h2 className="font-semibold">투표 정리</h2>
           <p className={`${hint} mt-1`}>
-            {poll.status === "open" ? "마감과 삭제는 되돌릴 수 없습니다." : "삭제는 되돌릴 수 없습니다."}
+            {poll.status === "open"
+              ? "마감과 삭제는 되돌릴 수 없습니다."
+              : poll.status === "scheduled"
+                ? "시작 전인 투표는 마감하지 않습니다. 필요 없으면 삭제하세요."
+                : "삭제는 되돌릴 수 없습니다."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

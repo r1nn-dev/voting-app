@@ -10,6 +10,7 @@ import { NewPollForm } from "./new-poll-form";
 export default async function NewPollPage({ searchParams }: PageProps<"/admin/new">) {
   await requireAdmin();
   const initialDeadline = kstInputFromNow(24 * 60 * 60 * 1000);
+  const initialOpensAt = kstInputFromNow(60 * 60 * 1000);
   // 복제: ?from=<id> pre-fills the form; an unknown id just opens an empty one.
   const from = (await searchParams).from;
   const template =
@@ -31,7 +32,11 @@ export default async function NewPollPage({ searchParams }: PageProps<"/admin/ne
             : "질문과 선택지, 마감 예정 시각을 정하면 바로 공개됩니다."}
         </p>
       </div>
-      <NewPollForm initialDeadline={initialDeadline} template={template} />
+      <NewPollForm
+        initialDeadline={initialDeadline}
+        initialOpensAt={initialOpensAt}
+        template={template}
+      />
     </div>
   );
 }

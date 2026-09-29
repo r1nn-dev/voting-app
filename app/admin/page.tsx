@@ -9,6 +9,7 @@ import { StatusBadge } from "../status-badge";
 import { buttonPrimary, card } from "../ui";
 
 const TABS = [
+  { key: "scheduled", label: "시작 전", empty: "시작 전인 투표가 없습니다." },
   { key: "open", label: "진행 중", empty: "진행 중인 투표가 없습니다." },
   { key: "closed", label: "마감", empty: "마감된 투표가 없습니다." },
   { key: "archived", label: "보관", empty: "보관된 투표가 없습니다." },
@@ -78,7 +79,16 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
         </p>
       ) : (
         <ul className={`${card} divide-y divide-zinc-100 overflow-hidden dark:divide-zinc-800`}>
-          {current === "open"
+          {current === "scheduled"
+            ? lists.scheduled.map((poll) => (
+                <PollRow
+                  key={poll.id}
+                  poll={poll}
+                  status="scheduled"
+                  when={`${formatKst(poll.opensAt)} 시작 예정 · ${formatRemaining(poll.opensAt)} 후 시작`}
+                />
+              ))
+            : current === "open"
             ? lists.open.map((poll) => (
                 <PollRow
                   key={poll.id}

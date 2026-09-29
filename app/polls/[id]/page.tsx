@@ -67,16 +67,34 @@ export default async function PollPage({ params }: PageProps<"/polls/[id]">) {
         </div>
         <p className="mt-2 flex items-center gap-1.5 text-sm text-zinc-500 dark:text-zinc-400">
           <ClockIcon className="size-4" />
-          {poll.status === "open"
-            ? `${formatKst(poll.deadline)} 마감 예정 · ${formatRemaining(poll.deadline)} 남음`
-            : `${formatKst(poll.closedAt)} 마감됨`}
+          {poll.status === "scheduled"
+            ? `${formatKst(poll.opensAt)} 시작 예정 · ${formatRemaining(poll.opensAt)} 후 시작`
+            : poll.status === "open"
+              ? `${formatKst(poll.deadline)} 마감 예정 · ${formatRemaining(poll.deadline)} 남음`
+              : `${formatKst(poll.closedAt)} 마감됨`}
         </p>
         <div className="mt-4">
           <SharePanel url={url} qrSvg={qr} />
         </div>
 
         <div className="mt-6 border-t border-zinc-100 pt-6 dark:border-zinc-800">
-          {poll.status === "closed" ? (
+          {poll.status === "scheduled" ? (
+            <div className="flex flex-col gap-4">
+              <p className="rounded-xl bg-violet-50 px-4 py-3 text-sm font-medium text-violet-800 dark:bg-violet-950/40 dark:text-violet-200">
+                {formatKst(poll.opensAt)}에 시작합니다. 그때부터 투표할 수 있어요.
+              </p>
+              <ul aria-label="선택지 미리 보기" className="grid gap-2.5 sm:grid-cols-2">
+                {poll.options.map((option) => (
+                  <li
+                    key={option.id}
+                    className="rounded-xl border border-dashed border-zinc-300 px-4 py-3.5 font-medium text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
+                  >
+                    {option.label}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : poll.status === "closed" ? (
             poll.results.total === 0 ? (
               <p className="py-6 text-center text-zinc-500 dark:text-zinc-400">
                 표 없이 마감된 투표입니다.

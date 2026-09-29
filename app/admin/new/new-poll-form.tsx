@@ -33,9 +33,12 @@ const QUICK_DEADLINES = [
  */
 export function NewPollForm({
   initialDeadline,
+  initialOpensAt,
   template = null,
 }: {
   initialDeadline: string;
+  /** Pre-filled 예약 time (KST), used only when the admin picks 예약. */
+  initialOpensAt: string;
   template?: PollTemplate | null;
 }) {
   const [state, formAction, pending] = useActionState(createPollAction, {});
@@ -46,6 +49,8 @@ export function NewPollForm({
   );
   const [deadline, setDeadline] = useState(initialDeadline);
   const [listed, setListed] = useState(template && !template.listed ? "false" : "true");
+  const [startMode, setStartMode] = useState<"now" | "later">("now");
+  const [opensAt, setOpensAt] = useState(initialOpensAt);
   const errors = state.errors;
 
   return (
@@ -66,6 +71,50 @@ export function NewPollForm({
         />
         {errors?.question && <p className={fieldError}>{errors.question}</p>}
       </div>
+
+      <fieldset className="flex flex-col gap-2">
+        <legend className={`${label} mb-2`}>
+          시작 <span className="font-normal text-zinc-500">(한국 시간)</span>
+        </legend>
+        <div className="flex flex-wrap items-center gap-4">
+          {(
+            [
+              ["now", "바로 시작"],
+              ["later", "예약"],
+            ] as const
+          ).map(([value, text]) => (
+            <label key={value} className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+              <input
+                type="radio"
+                name="startMode"
+                value={value}
+                checked={startMode === value}
+                onChange={() => setStartMode(value)}
+                className="accent-indigo-600"
+              />
+              {text}
+            </label>
+          ))}
+          {startMode === "later" && (
+            <input
+              name="opensAt"
+              type="datetime-local"
+              aria-label="시작 예정 시각"
+              value={opensAt}
+              onChange={(event) => setOpensAt(event.target.value)}
+              required
+              className={`${inputClass} w-auto`}
+            />
+          )}
+        </div>
+        {startMode === "later" && (
+          <p className={hint}>
+            지금부터 {POLL_LIMITS.deadlineMaxDays}일 이내. 그 전까지는 질문과 선택지만 보이고 표를 받지
+            않습니다.
+          </p>
+        )}
+        {errors?.opensAt && <p className={fieldError}>{errors.opensAt}</p>}
+      </fieldset>
 
       <div className="flex flex-col gap-2">
         <label htmlFor="deadline" className={label}>
@@ -93,7 +142,7 @@ export function NewPollForm({
           ))}
         </div>
         <p className={hint}>
-          지금부터 {POLL_LIMITS.deadlineMinMinutes}분 뒤 ~ {POLL_LIMITS.deadlineMaxDays}일 뒤.
+          시작부터 {POLL_LIMITS.deadlineMinMinutes}분 뒤 ~ {POLL_LIMITS.deadlineMaxDays}일 뒤.
           시각이 지나면 자동으로 마감됩니다.
         </p>
         {errors?.deadline && <p className={fieldError}>{errors.deadline}</p>}
