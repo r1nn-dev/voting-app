@@ -208,7 +208,24 @@ describe("closePoll", () => {
   it("투표하지 않은 사람의 결과에는 내 선택이 없다", async () => {
     const results = await closedResults([1, 2, 0], bob);
 
-    expect(results.options.every((option) => !option.isMine)).toBe(true);
+    expect(results.options.map((option) => option.isMine)).toEqual([false, false, false]);
+  });
+
+  it("결과의 각 선택지는 생성 순번을 갖고, 투표의 선택지 목록은 생성 순서를 유지한다", async () => {
+    const id = await createOpenPoll("점심?", ["김밥", "라면", "돈가스"]);
+    await castVotes(id, [0, 1, 2]);
+    await polls.closePoll(id);
+
+    const poll = await polls.getPollForVoter(id, null);
+
+    expect(poll?.options.map((option) => option.label)).toEqual(["김밥", "라면", "돈가스"]);
+    expect(
+      poll?.status === "closed" && poll.results.options.map((o) => [o.label, o.position]),
+    ).toEqual([
+      ["돈가스", 2],
+      ["라면", 1],
+      ["김밥", 0],
+    ]);
   });
 
   it("이미 마감된 투표를 다시 마감해도 성공하고, 없는 투표는 없음을 알린다", async () => {
@@ -223,10 +240,12 @@ describe("closePoll", () => {
     const results = await closedResults([0, 0, 0]);
 
     expect(results.total).toBe(0);
-    expect(results.options.map((option) => [option.votes, option.percent, option.isTop])).toEqual([
-      [0, 0, false],
-      [0, 0, false],
-      [0, 0, false],
+    expect(
+      results.options.map((option) => [option.votes, option.percent, option.isTop, option.isMine]),
+    ).toEqual([
+      [0, 0, false, false],
+      [0, 0, false, false],
+      [0, 0, false, false],
     ]);
   });
 });

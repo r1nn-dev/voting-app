@@ -1,17 +1,18 @@
 import type { ShareResults } from "@/lib/polls";
 
-// Up to 10 options, one color each, readable on light and dark backgrounds.
-const PALETTE = [
-  "#2563eb",
-  "#16a34a",
-  "#ea580c",
-  "#9333ea",
-  "#db2777",
-  "#0891b2",
-  "#ca8a04",
-  "#4f46e5",
-  "#dc2626",
-  "#64748b",
+// One color per option, picked by its creation position (up to 10). Each has
+// at least 4.5:1 contrast with the white segment labels (WCAG AA).
+const OPTION_COLORS = [
+  "#1d4ed8",
+  "#15803d",
+  "#c2410c",
+  "#7e22ce",
+  "#be185d",
+  "#0e7490",
+  "#a16207",
+  "#4338ca",
+  "#b91c1c",
+  "#475569",
 ];
 
 /** Segments narrower than this skip their inline label; the legend always has it. */
@@ -39,7 +40,7 @@ export function ShareBar({ results }: { results: ShareResults }) {
               className={`flex items-center justify-center overflow-hidden text-xs font-medium text-white ${
                 index === lastVisible ? "grow" : ""
               }`}
-              style={{ width: `${option.percent}%`, backgroundColor: PALETTE[index] }}
+              style={{ width: `${option.percent}%`, backgroundColor: OPTION_COLORS[option.position] }}
             >
               {option.percent >= MIN_LABELED_PERCENT && `${option.percent.toFixed(1)}%`}
             </div>
@@ -48,13 +49,13 @@ export function ShareBar({ results }: { results: ShareResults }) {
       </div>
 
       <ul className="flex flex-col gap-2">
-        {results.options.map((option, index) => (
+        {results.options.map((option) => (
           <li key={option.id} className="flex items-center justify-between gap-4 text-sm">
             <span className="flex min-w-0 items-center gap-2">
               <span
                 aria-hidden
                 className="size-3 shrink-0 rounded-sm"
-                style={{ backgroundColor: PALETTE[index] }}
+                style={{ backgroundColor: OPTION_COLORS[option.position] }}
               />
               <span className={`truncate ${option.isTop ? "font-semibold" : ""}`}>
                 {option.label}

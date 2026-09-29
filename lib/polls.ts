@@ -37,7 +37,8 @@ export type AdminPollSummary = PollSummary & { tally: VoteTally };
  */
 export type ShareResults = {
   total: number;
-  options: (OptionTally & { isMine: boolean })[];
+  /** `position` is the option's creation index, so its color can stay tied to the option. */
+  options: (OptionTally & { position: number; isMine: boolean })[];
 };
 
 type VoterPollBase = {
@@ -172,11 +173,9 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       return { ...base, options, status: "open", deadline: poll.deadline };
     }
 
-    const results = computeShare(
-      computeTally((await countVotes(pollId)).get(pollId) ?? []),
-      poll.my_choice,
-    );
-    const options = results.options.map(({ id, label }) => ({ id, label }));
+    const tally = computeTally((await countVotes(pollId)).get(pollId) ?? []);
+    const options = tally.options.map(({ id, label }) => ({ id, label }));
+    const results = computeShare(tally, poll.my_choice);
     return { ...base, options, status: "closed", closedAt: poll.closed_at!, results };
   }
 
@@ -286,8 +285,8 @@ function computeShare(tally: VoteTally, myChoice: string | null): ShareResults {
   return {
     total: tally.total,
     options: tally.options
-      .toSorted((a, b) => b.votes - a.votes)
-      .map((option) => ({ ...option, isMine: option.id === myChoice })),
+      .map((option, position) => ({ ...option, position, isMine: option.id === myChoice }))
+      .toSorted((a, b) => b.votes - a.votes),
   };
 }
 

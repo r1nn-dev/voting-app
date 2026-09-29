@@ -33,7 +33,6 @@ export default async function PollPage({ params }: PageProps<"/polls/[id]">) {
           <>
             <p className="mb-4 text-sm text-zinc-500">
               총 {poll.results.total}표
-              {myChoice && ` · 당신의 선택: ${myChoice.label}`}
             </p>
             <ShareBar results={poll.results} />
           </>
