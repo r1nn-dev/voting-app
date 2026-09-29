@@ -11,11 +11,13 @@ import { ArchiveIcon, ArrowLeftIcon, CheckIcon, ClockIcon } from "../../icons";
 import { ShareBar } from "../../share-bar";
 import { SharePanel } from "../../share-panel";
 import { StatusBadge } from "../../status-badge";
-import { backLink, card, cardPadding } from "../../ui";
+import { backLink, buttonSecondary, card, cardPadding } from "../../ui";
 import { VoteForm } from "./vote-form";
 
-export default async function PollPage({ params }: PageProps<"/polls/[id]">) {
+export default async function PollPage({ params, searchParams }: PageProps<"/polls/[id]">) {
   const { id } = await params;
+  // ?code= fills in a 참여 코드 (personal link); an empty one asks for the next code.
+  const { code } = await searchParams;
   const poll = await createPolls(getSql()).getPollForVoter(id, await readVoterId());
   if (!poll) notFound();
 
@@ -50,6 +52,8 @@ export default async function PollPage({ params }: PageProps<"/polls/[id]">) {
   }
 
   const myChoice = poll.options.find((option) => poll.myChoices.includes(option.id));
+  // A 참여 코드 poll takes several ballots from one device, one per code.
+  const askForCode = poll.usesCodes && typeof code === "string";
   const url = await pollUrl(poll.id);
   const qr = await qrSvg(url);
 
@@ -108,7 +112,7 @@ export default async function PollPage({ params }: PageProps<"/polls/[id]">) {
                 <ShareBar results={poll.results} />
               </>
             )
-          ) : myChoice ? (
+          ) : myChoice && !askForCode ? (
             <div className="py-4 text-center">
               <span className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
                 <CheckIcon className="size-6" />
@@ -120,9 +124,19 @@ export default async function PollPage({ params }: PageProps<"/polls/[id]">) {
               <p className="mt-4 text-sm text-zinc-500 dark:text-zinc-400">
                 결과는 투표가 마감되면 공개됩니다.
               </p>
+              {poll.usesCodes && (
+                <Link href={`/polls/${poll.id}?code=`} className={`${buttonSecondary} mt-5`}>
+                  다른 코드로 투표하기
+                </Link>
+              )}
             </div>
           ) : (
-            <VoteForm pollId={poll.id} options={poll.options} />
+            <VoteForm
+              pollId={poll.id}
+              options={poll.options}
+              usesCodes={poll.usesCodes}
+              initialCode={typeof code === "string" ? code : ""}
+            />
           )}
         </div>
       </section>

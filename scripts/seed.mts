@@ -23,9 +23,18 @@ type SamplePoll = {
   listed?: boolean;
   /** 시작 예정 시각 relative to now; missing means it started when created. */
   opensIn?: number;
+  /** 참여 코드 to issue; every seeded vote then spends one. */
+  codes?: number;
 };
 
 const SAMPLE_POLLS: SamplePoll[] = [
+  {
+    question: "우리 반 반장으로 누구를 뽑을까요?",
+    options: ["김민준", "이서연", "박지호"],
+    votes: [4, 3, 1],
+    codes: 20,
+    deadlineIn: 2 * DAY,
+  },
   {
     question: "다음 학기 스터디 주제는 무엇이 좋을까요?",
     options: ["알고리즘", "웹 개발", "데이터 분석", "영어 회화"],
@@ -112,11 +121,11 @@ for (const [index, poll] of [...SAMPLE_POLLS].reverse().entries()) {
   const deadline = new Date(now + poll.deadlineIn);
   const closedAt = poll.closedAgo === undefined ? null : new Date(now - poll.closedAgo);
   await sql`
-    INSERT INTO polls (id, question, created_at, opens_at, deadline, closed_at, listed)
+    INSERT INTO polls (id, question, created_at, opens_at, deadline, closed_at, listed, uses_codes)
     VALUES (
       ${id}, ${poll.question}, ${createdAt},
       ${poll.opensIn === undefined ? createdAt : new Date(now + poll.opensIn)},
-      ${deadline}, ${closedAt}, ${poll.listed ?? true}
+      ${deadline}, ${closedAt}, ${poll.listed ?? true}, ${(poll.codes ?? 0) > 0}
     )
   `;
   const optionRows = (await sql`
@@ -127,11 +136,23 @@ for (const [index, poll] of [...SAMPLE_POLLS].reverse().entries()) {
   `) as { id: string; position: number }[];
   const optionIdAt = new Map(optionRows.map((row) => [row.position, row.id]));
 
+  const codes = sampleCodes(poll.codes ?? 0);
+  const totalVotes = poll.votes.reduce((sum, count) => sum + count, 0);
+  if (codes.length > 0) {
+    // The first codes are the ones the seeded votes spent.
+    await sql`
+      INSERT INTO participation_codes (poll_id, code, used_at)
+      SELECT ${id}, code, CASE WHEN ordinality <= ${totalVotes} THEN now() END
+      FROM unnest(${codes}::text[]) WITH ORDINALITY AS c (code, ordinality)
+    `;
+  }
+
   for (const [position, voteCount] of poll.votes.entries()) {
     for (let i = 0; i < voteCount; i++) {
       await sql`
         WITH ballot AS (
-          INSERT INTO ballots (poll_id, voter_id) VALUES (${id}, ${randomUUID()}::uuid)
+          INSERT INTO ballots (poll_id, voter_id, by_code)
+          VALUES (${id}, ${randomUUID()}::uuid, ${codes.length > 0})
           RETURNING id
         )
         INSERT INTO ballot_choices (ballot_id, poll_id, option_id)
@@ -142,3 +163,13 @@ for (const [index, poll] of [...SAMPLE_POLLS].reverse().entries()) {
 }
 
 console.log(`예시 투표 ${SAMPLE_POLLS.length}개를 넣었습니다.`);
+
+/** Same shape as the app's 참여 코드: 8 characters without 0, O, 1, I and L. */
+function sampleCodes(count: number): string[] {
+  const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const codes = new Set<string>();
+  while (codes.size < count) {
+    codes.add(Array.from({ length: 8 }, () => alphabet[randomInt(alphabet.length)]).join(""));
+  }
+  return [...codes];
+}

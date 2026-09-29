@@ -2,10 +2,22 @@
 
 import { useActionState } from "react";
 import type { PollOption } from "@/lib/polls";
-import { buttonPrimary, fieldError, hint } from "../../ui";
+import { buttonPrimary, fieldError, hint, input, label } from "../../ui";
 import { castVoteAction } from "./vote-actions";
 
-export function VoteForm({ pollId, options }: { pollId: string; options: PollOption[] }) {
+export function VoteForm({
+  pollId,
+  options,
+  usesCodes,
+  initialCode = "",
+}: {
+  pollId: string;
+  options: PollOption[];
+  /** 참여 코드 poll: the form asks for a code. */
+  usesCodes: boolean;
+  /** From a personal link (?code=). */
+  initialCode?: string;
+}) {
   const [state, formAction, pending] = useActionState(castVoteAction, {});
 
   return (
@@ -32,6 +44,23 @@ export function VoteForm({ pollId, options }: { pollId: string; options: PollOpt
         ))}
       </fieldset>
 
+      {usesCodes && (
+        <label className="flex flex-col gap-1.5">
+          <span className={label}>참여 코드</span>
+          <input
+            name="code"
+            defaultValue={initialCode}
+            required
+            maxLength={20}
+            autoComplete="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            placeholder="받은 코드 8자리"
+            className={`${input} font-mono uppercase tracking-widest`}
+          />
+        </label>
+      )}
+
       {state.error && (
         <p aria-live="polite" className={`${fieldError} rounded-lg bg-red-50 px-3 py-2 dark:bg-red-950/40`}>
           {state.error}
@@ -43,7 +72,9 @@ export function VoteForm({ pollId, options }: { pollId: string; options: PollOpt
           {pending ? "제출 중…" : "투표하기"}
         </button>
         <p className={`${hint} text-center`}>
-          한 번 투표하면 바꿀 수 없습니다. 결과는 마감 후에 공개됩니다.
+          {usesCodes
+            ? "코드 하나로 한 번 투표할 수 있고, 바꿀 수 없습니다. 결과는 마감 후에 공개됩니다."
+            : "한 번 투표하면 바꿀 수 없습니다. 결과는 마감 후에 공개됩니다."}
         </p>
       </div>
     </form>

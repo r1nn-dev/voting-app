@@ -1,5 +1,6 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import { getSql } from "@/lib/db";
 import { createPolls, type CastVoteFailure } from "@/lib/polls";
 import { getOrIssueVoterId } from "@/lib/voter-session";
@@ -13,6 +14,8 @@ const FAILURE_MESSAGES: Record<CastVoteFailure, string> = {
   closed: "이미 마감된 투표입니다. 표가 반영되지 않았습니다.",
   already_voted: "이미 이 투표에 표를 던졌습니다.",
   invalid_choice: "올바른 선택지를 골라 주세요.",
+  // One message for every code failure, so guessing learns nothing (ADR-0007).
+  invalid_code: "사용할 수 없는 코드입니다. 받은 코드를 다시 확인해 주세요.",
 };
 
 // The poll id travels as a form field, not a bound argument: an action bound
@@ -20,6 +23,8 @@ const FAILURE_MESSAGES: Record<CastVoteFailure, string> = {
 export async function castVoteAction(_prev: VoteState, formData: FormData): Promise<VoteState> {
   const pollId = String(formData.get("pollId") ?? "");
   const optionId = formData.get("optionId");
+  // Only a 참여 코드 poll's form has this field.
+  const code = formData.get("code");
   if (typeof optionId !== "string" || !optionId) {
     return { error: "선택지를 하나 골라 주세요." };
   }
@@ -28,11 +33,14 @@ export async function castVoteAction(_prev: VoteState, formData: FormData): Prom
     pollId,
     [optionId],
     await getOrIssueVoterId(),
+    typeof code === "string" ? code : null,
   );
   // On failure, keep the page as is: re-rendering it (e.g. as closed or 404)
   // would unmount the form and hide the message saying the vote did not count.
   if (!result.ok) return { error: FAILURE_MESSAGES[result.reason] };
 
   revalidatePollPages(pollId);
+  // Drop ?code= so the page shows 투표 완료 instead of the form again.
+  if (typeof code === "string") redirect(`/polls/${pollId}`);
   return {};
 }

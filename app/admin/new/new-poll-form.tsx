@@ -50,6 +50,7 @@ export function NewPollForm({
   const [deadline, setDeadline] = useState(initialDeadline);
   const [listed, setListed] = useState(template && !template.listed ? "false" : "true");
   const [startMode, setStartMode] = useState<"now" | "later">("now");
+  const [usesCodes, setUsesCodes] = useState(template?.usesCodes ?? false);
   const [opensAt, setOpensAt] = useState(initialOpensAt);
   const errors = state.errors;
 
@@ -178,6 +179,43 @@ export function NewPollForm({
             </label>
           ))}
         </div>
+      </fieldset>
+
+      <fieldset className="flex flex-col gap-2">
+        <legend className={`${label} mb-2`}>참여 코드</legend>
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              name="usesCodes"
+              checked={usesCodes}
+              onChange={(event) => setUsesCodes(event.target.checked)}
+              className="accent-indigo-600"
+            />
+            참여 코드 사용
+          </label>
+          {usesCodes && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                name="codeCount"
+                type="number"
+                min={1}
+                max={POLL_LIMITS.maxCodes}
+                defaultValue={30}
+                required
+                aria-label="발급할 코드 수"
+                className={`${inputClass} w-24`}
+              />
+              개 발급
+            </label>
+          )}
+        </div>
+        <p className={hint}>
+          {usesCodes
+            ? `1회용 코드를 한 사람에게 하나씩 나눠 주세요. 코드 하나로 한 번만 투표할 수 있고, 나중에 추가로 발급할 수 있습니다(모두 ${POLL_LIMITS.maxCodes}개까지).`
+            : "끄면 지금처럼 브라우저마다 한 표입니다."}
+        </p>
+        {errors?.codeCount && <p className={fieldError}>{errors.codeCount}</p>}
       </fieldset>
 
       <fieldset className="flex flex-col gap-2.5">

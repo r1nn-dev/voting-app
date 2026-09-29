@@ -10,4 +10,6 @@ export const POLL_LIMITS = {
   deadlineMaxDays: 30,
   /** A closed poll stays public this long after its 마감 시각, then it is 보관 (archived). */
   publicDays: 30,
+  /** 참여 코드 per poll, at creation and in total. */
+  maxCodes: 500,
 } as const;

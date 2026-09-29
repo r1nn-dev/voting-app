@@ -19,6 +19,7 @@ import {
   startNowAction,
 } from "../../poll-actions";
 import { ExtendDeadlineForm } from "./extend-deadline-form";
+import { IssueCodesForm } from "./issue-codes-form";
 import { RescheduleForm } from "./reschedule-form";
 import { RankChart } from "./rank-chart";
 
@@ -103,6 +104,34 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
         </section>
       ) : (
         <RankChart ranking={poll.ranking} openUntil={poll.status === "open" ? poll.deadline : null} />
+      )}
+
+      {poll.codes && (
+        <section className={`${card} ${cardPadding} flex flex-col gap-4`}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">참여 코드</h2>
+              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+                코드 <strong className="tabular-nums">{poll.codes.issued}</strong>개 중{" "}
+                <strong className="tabular-nums">{poll.codes.used}</strong>개 사용
+              </p>
+              <p className={`${hint} mt-1`}>
+                코드 하나로 한 번 투표할 수 있습니다. 어떤 코드로 무엇을 골랐는지는 남지 않습니다.
+              </p>
+            </div>
+            <a href={`/admin/polls/${poll.id}/codes`} className={buttonSecondary}>
+              코드 CSV 받기
+            </a>
+          </div>
+          {(poll.status === "scheduled" || poll.status === "open") &&
+            (poll.codes.issued < POLL_LIMITS.maxCodes ? (
+              <div className="border-t border-zinc-100 pt-4 dark:border-zinc-800">
+                <IssueCodesForm pollId={poll.id} remaining={POLL_LIMITS.maxCodes - poll.codes.issued} />
+              </div>
+            ) : (
+              <p className={hint}>코드는 한 투표에 {POLL_LIMITS.maxCodes}개까지 발급할 수 있습니다.</p>
+            ))}
+        </section>
       )}
 
       {poll.status === "open" && (

@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { resetDatabase, testSql } from "@/tests/db";
-import { createPolls } from "./polls";
+import { CODE_ALPHABET, createPolls } from "./polls";
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -708,7 +708,17 @@ describe("복제용 설정", () => {
       question: "점심?",
       options: ["김밥", "라면", "돈가스"],
       listed: false,
+      usesCodes: false,
     });
+  });
+
+  it("참여 코드 사용 여부는 복사하지만 코드는 복사하지 않는다", async () => {
+    const id = await createCodePoll(3);
+
+    const admin = await polls.getPollForAdmin(id);
+
+    expect(admin?.template.usesCodes).toBe(true);
+    expect(JSON.stringify(admin?.template)).not.toMatch(/[A-Z2-9]{8}/);
   });
 });
 
@@ -861,6 +871,203 @@ describe("예약 공개", () => {
   });
 });
 
+async function createCodePoll(codeCount: number, deadline = at(DAY)) {
+  const result = await polls.createPoll({
+    question: "반장 선거",
+    options: ["가", "나", "다"],
+    deadline,
+    codeCount,
+  });
+  if (!result.ok) throw new Error(`투표 생성 실패: ${JSON.stringify(result.errors)}`);
+  return result.id;
+}
+
+const BASE_URL = "https://hanpyo.example";
+
+/** Codes and whether each is used, read back through the admin CSV. */
+async function codesOf(pollId: string) {
+  const csv = await polls.codesCsv(pollId, BASE_URL);
+  if (csv === null) throw new Error("투표 없음");
+  return csv
+    .replace(/^\uFEFF/, "")
+    .split("\r\n")
+    .slice(1)
+    .map((line) => {
+      const [code, used, link] = line.split(",");
+      return { code, used: used === "사용함", link };
+    });
+}
+
+describe("참여 코드", () => {
+  it("만들 때 정한 개수만큼 8자리 코드를 헷갈리는 글자 없이, 중복 없이 발급한다", async () => {
+    const id = await createCodePoll(200);
+
+    const codes = (await codesOf(id)).map((row) => row.code);
+
+    expect(codes).toHaveLength(200);
+    expect(new Set(codes).size).toBe(200);
+    for (const code of codes) {
+      expect(code).toMatch(new RegExp(`^[${CODE_ALPHABET}]{8}$`));
+      expect(code).not.toMatch(/[01OIL]/);
+    }
+    expect((await polls.getPollForAdmin(id))?.codes).toEqual({ issued: 200, used: 0 });
+  });
+
+  it("코드를 쓰지 않는 투표는 코드 통계가 없다", async () => {
+    const id = await createOpenPoll();
+
+    expect((await polls.getPollForAdmin(id))?.codes).toBeNull();
+    expect((await publicView(id, alice)).usesCodes).toBe(false);
+  });
+
+  it("코드 개수는 0~500이다", async () => {
+    for (const codeCount of [-1, 501, 1.5]) {
+      const result = await polls.createPoll({
+        question: "q",
+        options: ["a", "b"],
+        deadline: at(DAY),
+        codeCount,
+      });
+      expect(result).toMatchObject({ ok: false, errors: { codeCount: expect.any(String) } });
+    }
+    expect(await polls.listPolls()).toEqual({ scheduled: [], open: [], closed: [] });
+  });
+
+  it("코드로 투표하면 표가 들어가고 코드가 사용 처리된다", async () => {
+    const id = await createCodePoll(2);
+    const [{ code }] = await codesOf(id);
+    const [a] = await optionIds(id);
+
+    expect(await polls.castVote(id, [a], alice, code)).toEqual({ ok: true });
+
+    expect((await codesOf(id)).find((row) => row.code === code)?.used).toBe(true);
+    expect((await polls.getPollForAdmin(id))?.codes).toEqual({ issued: 2, used: 1 });
+    expect((await publicView(id, alice)).myChoices).toEqual([a]);
+  });
+
+  it("같은 코드 재사용, 없는 코드, 다른 투표의 코드, 코드 누락은 모두 invalid_code다", async () => {
+    const id = await createCodePoll(2);
+    const other = await createCodePoll(1);
+    const [{ code }] = await codesOf(id);
+    const [{ code: otherCode }] = await codesOf(other);
+    const [a] = await optionIds(id);
+    await polls.castVote(id, [a], alice, code);
+
+    for (const attempt of [code, "ZZZZZZZZ", otherCode, "", null, undefined]) {
+      expect(await polls.castVote(id, [a], bob, attempt)).toEqual({
+        ok: false,
+        reason: "invalid_code",
+      });
+    }
+    expect((await polls.getPollForAdmin(id))?.ranking.summary.total).toBe(1);
+    expect((await polls.getPollForAdmin(other))?.codes).toEqual({ issued: 1, used: 0 });
+  });
+
+  it("잘못된 선택지로 실패하면 코드가 소모되지 않는다", async () => {
+    const id = await createCodePoll(1);
+    const [{ code }] = await codesOf(id);
+    const [otherOption] = await optionIds(await createOpenPoll("다른 투표"));
+
+    expect(await polls.castVote(id, [otherOption], alice, code)).toEqual({
+      ok: false,
+      reason: "invalid_choice",
+    });
+    expect((await codesOf(id))[0].used).toBe(false);
+  });
+
+  it("소문자와 공백을 섞어 넣어도 같은 코드로 본다", async () => {
+    const id = await createCodePoll(1);
+    const [{ code }] = await codesOf(id);
+    const [a] = await optionIds(id);
+    const messy = `  ${code.slice(0, 4).toLowerCase()} ${code.slice(4)} `;
+
+    expect(await polls.castVote(id, [a], alice, messy)).toEqual({ ok: true });
+  });
+
+  it("같은 브라우저라도 코드가 다르면 여러 표를 던지고, 내 선택은 마지막 표다", async () => {
+    const id = await createCodePoll(3);
+    const codes = await codesOf(id);
+    const [a, b] = await optionIds(id);
+
+    expect(await polls.castVote(id, [a], alice, codes[0].code)).toEqual({ ok: true });
+    expect(await polls.castVote(id, [b], alice, codes[1].code)).toEqual({ ok: true });
+
+    expect((await publicView(id, alice)).myChoices).toEqual([b]);
+    const admin = await polls.getPollForAdmin(id);
+    expect(admin?.codes).toEqual({ issued: 3, used: 2 });
+    expect(admin?.ranking.summary.total).toBe(2);
+  });
+
+  it("코드 없는 투표는 여전히 브라우저당 한 표이고, 보낸 코드는 무시한다", async () => {
+    const id = await createOpenPoll();
+    const [a, b] = await optionIds(id);
+
+    expect(await polls.castVote(id, [a], alice, "ABCDEFGH")).toEqual({ ok: true });
+    expect(await polls.castVote(id, [b], alice, "HGFEDCBA")).toEqual({
+      ok: false,
+      reason: "already_voted",
+    });
+  });
+
+  it("시작 전 코드 투표는 not_started다 (코드가 맞아도)", async () => {
+    const created = await polls.createPoll({
+      question: "q",
+      options: ["a", "b"],
+      opensAt: at(HOUR),
+      deadline: at(DAY),
+      codeCount: 1,
+    });
+    if (!created.ok) throw new Error("투표 생성 실패");
+    const [{ code }] = await codesOf(created.id);
+
+    expect(await polls.castVote(created.id, [(await optionIds(created.id))[0]], alice, code)).toEqual({
+      ok: false,
+      reason: "not_started",
+    });
+    expect((await codesOf(created.id))[0].used).toBe(false);
+  });
+
+  it("추가 발급은 총 500개까지다", async () => {
+    const id = await createCodePoll(10);
+
+    expect(await polls.issueCodes(id, 5)).toEqual({ ok: true, issued: 5 });
+    expect((await polls.getPollForAdmin(id))?.codes).toEqual({ issued: 15, used: 0 });
+    expect(await polls.issueCodes(id, 486)).toEqual({ ok: false, reason: "limit_exceeded" });
+    expect(await polls.issueCodes(id, 485)).toEqual({ ok: true, issued: 485 });
+    expect(await polls.issueCodes(id, 1)).toEqual({ ok: false, reason: "limit_exceeded" });
+    expect(new Set((await codesOf(id)).map((row) => row.code)).size).toBe(500);
+  });
+
+  it("코드를 쓰지 않는 투표, 마감된 투표, 없는 투표에는 발급하지 않는다", async () => {
+    const plain = await createOpenPoll();
+    const closing = await createCodePoll(1);
+    await polls.closePoll(closing);
+
+    expect(await polls.issueCodes(plain, 1)).toEqual({ ok: false, reason: "codes_disabled" });
+    expect(await polls.issueCodes(closing, 1)).toEqual({ ok: false, reason: "closed" });
+    expect(await polls.issueCodes("nope000000", 1)).toEqual({ ok: false, reason: "not_found" });
+  });
+
+  it("코드 CSV는 BOM과 사람마다 쓸 개인 링크를 담는다", async () => {
+    const id = await createCodePoll(2);
+
+    const csv = await polls.codesCsv(id, BASE_URL);
+
+    expect(csv?.startsWith("\uFEFF코드,사용 여부,개인 링크\r\n")).toBe(true);
+    for (const { code, link } of await codesOf(id)) {
+      expect(link).toBe(`${BASE_URL}/polls/${id}?code=${code}`);
+    }
+    expect(await polls.codesCsv("nope000000", BASE_URL)).toBeNull();
+  });
+
+  it("투표를 삭제하면 코드도 사라진다", async () => {
+    const id = await createCodePoll(3);
+    await polls.deletePoll(id);
+
+    expect(await testSql`SELECT 1 FROM participation_codes`).toEqual([]);
+  });
+});
+
 describe("deletePoll", () => {
   it("표가 있는 투표를 지우면 어디서도 조회되지 않고, 다른 투표는 그대로다", async () => {
     const doomed = await createOpenPoll("지울 투표");
@@ -986,6 +1193,7 @@ describe("createPoll", () => {
       question: "점심 뭐 먹지?",
       status: "open",
       myChoices: [],
+      usesCodes: false,
     });
     expect(poll?.options.map((option) => option.label)).toEqual(["김밥", "라면", "돈가스"]);
   });

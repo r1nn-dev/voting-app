@@ -9,6 +9,7 @@ import {
   createPolls,
   type CreatePollErrors,
   type ExtendDeadlineFailure,
+  type IssueCodesFailure,
   type RescheduleFailure,
 } from "@/lib/polls";
 import { revalidatePollPages } from "../revalidate-polls";
@@ -31,6 +32,8 @@ export async function createPollAction(
         ? (parseKstInput(formData.get("opensAt")) ?? new Date(Number.NaN))
         : null,
     listed: formData.get("listed") !== "false",
+    // Unchecked sends nothing; a checked box with no usable count fails validation.
+    codeCount: formData.get("usesCodes") === "on" ? Number(formData.get("codeCount") || Number.NaN) : 0,
   });
   if (!result.ok) return { errors: result.errors };
 
@@ -82,6 +85,33 @@ export async function rescheduleAction(
 
   revalidatePollPages(pollId);
   return {};
+}
+
+export type IssueCodesState = { error?: string; issued?: number };
+
+const ISSUE_CODES_FAILURE_MESSAGES: Record<IssueCodesFailure, string> = {
+  not_found: "투표가 없거나 삭제되었습니다.",
+  codes_disabled: "참여 코드를 쓰지 않는 투표입니다.",
+  closed: "마감된 투표에는 코드를 발급할 수 없습니다.",
+  limit_exceeded: `코드는 한 투표에 모두 ${POLL_LIMITS.maxCodes}개까지 발급할 수 있습니다.`,
+};
+
+/** More 참여 코드 for a 시작 전 or 진행 중 poll. pollId is a form field (see castVoteAction). */
+export async function issueCodesAction(
+  _prev: IssueCodesState,
+  formData: FormData,
+): Promise<IssueCodesState> {
+  await requireAdmin();
+
+  const pollId = String(formData.get("pollId") ?? "");
+  const count = Number(formData.get("count"));
+  if (!Number.isInteger(count) || count < 1) return { error: "발급할 개수를 1 이상으로 입력하세요." };
+
+  const result = await createPolls(getSql()).issueCodes(pollId, count);
+  if (!result.ok) return { error: ISSUE_CODES_FAILURE_MESSAGES[result.reason] };
+
+  revalidatePollPages(pollId);
+  return { issued: result.issued };
 }
 
 /** "지금 바로 시작" for a 시작 전 poll. */

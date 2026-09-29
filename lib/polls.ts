@@ -73,9 +73,13 @@ type VoterPollBase = {
   id: string;
   question: string;
   options: PollOption[];
-  /** Option id this voter chose, or null if they have not voted. */
-  /** Option IDs of this browser's ballot, in option order; empty before voting. */
+  /**
+   * Option IDs of this browser's ballot, in option order; empty before voting.
+   * In a 참여 코드 poll a browser may cast several ballots; this is the last one.
+   */
   myChoices: string[];
+  /** 참여 코드 poll: every ballot needs an unused code. */
+  usesCodes: boolean;
 };
 
 /**
@@ -107,10 +111,13 @@ export type CreatePollInput = {
   opensAt?: Date | null;
   /** 목록 공개 unless false (링크 전용). */
   listed?: boolean;
+  /** 참여 코드 to issue with the poll: 0 or missing means no codes, otherwise 1~500. */
+  codeCount?: number;
 };
 
 export type CreatePollErrors = {
   question?: string;
+  codeCount?: string;
   opensAt?: string;
   deadline?: string;
   /** Problem with the option list as a whole (count). */
@@ -155,11 +162,22 @@ export type AdminPoll = {
   closedAt: Date | null;
   /** 득표 현황 while open, 결과 once closed; the admin sees it either way. */
   ranking: Ranking;
-  /** What 복제 copies into a new poll form: never votes or times. */
+  /** 참여 코드 issued and used; null when the poll takes no codes. */
+  codes: { issued: number; used: number } | null;
+  /** What 복제 copies into a new poll form: never votes, codes or times. */
   template: PollTemplate;
 };
 
-export type PollTemplate = { question: string; options: string[]; listed: boolean };
+export type PollTemplate = {
+  question: string;
+  options: string[];
+  listed: boolean;
+  usesCodes: boolean;
+};
+
+export type IssueCodesFailure = "not_found" | "codes_disabled" | "closed" | "limit_exceeded";
+
+export type IssueCodesResult = { ok: true; issued: number } | { ok: false; reason: IssueCodesFailure };
 
 export type ExtendDeadlineFailure =
   | "not_found"
@@ -179,7 +197,8 @@ export type CastVoteFailure =
   | "not_started"
   | "closed"
   | "already_voted"
-  | "invalid_choice";
+  | "invalid_choice"
+  | "invalid_code";
 
 export type CastVoteResult = { ok: true } | { ok: false; reason: CastVoteFailure };
 
@@ -272,7 +291,8 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   async function createPoll(input: CreatePollInput): Promise<CreatePollResult> {
     const question = input.question.trim();
     const options = input.options.map((option) => option.trim());
-    const errors = validatePoll(question, options, input.deadline, input.opensAt ?? null);
+    const codeCount = input.codeCount ?? 0;
+    const errors = validatePoll(question, options, input.deadline, input.opensAt ?? null, codeCount);
     if (errors || !input.deadline) return { ok: false, errors: errors ?? {} };
 
     const id = newPollId();
@@ -280,14 +300,18 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     const opens = sql`coalesce(${input.opensAt?.toISOString() ?? null}::timestamptz, ${at})`;
     const deadline = sql`${input.deadline.toISOString()}::timestamptz`;
     const ranges = scheduleRanges(at, opens, deadline);
-    // One statement, so a poll can never exist without its options. The time
-    // ranges are checked here, against the same "now" as every judgement.
+    // One statement, so a poll can never exist without its options and codes.
+    // The time ranges are checked here, against the same "now" as every judgement.
     const inserted = await sql`
       WITH poll AS (
-        INSERT INTO polls (id, question, opens_at, deadline, listed)
-        SELECT ${id}, ${question}, ${opens}, ${deadline}, ${input.listed ?? true}
+        INSERT INTO polls (id, question, opens_at, deadline, listed, uses_codes)
+        SELECT ${id}, ${question}, ${opens}, ${deadline}, ${input.listed ?? true}, ${codeCount > 0}
         WHERE ${ranges.opensOk} AND ${ranges.deadlineOk}
         RETURNING id
+      ),
+      codes AS (
+        INSERT INTO participation_codes (poll_id, code)
+        SELECT poll.id, code FROM poll, unnest(${newCodes(codeCount)}::text[]) AS code
       )
       INSERT INTO options (poll_id, label, position)
       SELECT poll.id, option.label, option.ordinality - 1
@@ -317,22 +341,32 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       SELECT
         p.id,
         p.question,
+        p.uses_codes,
         ${pollState(at)},
         ARRAY(
           SELECT c.option_id::text
-          FROM ballots b
-          JOIN ballot_choices c ON c.ballot_id = b.id
+          FROM ballot_choices c
           JOIN options o ON o.id = c.option_id
-          WHERE b.poll_id = p.id AND b.voter_id = ${voterId}::uuid AND NOT b.by_code
+          WHERE c.ballot_id = (
+            SELECT b.id FROM ballots b
+            WHERE b.poll_id = p.id AND b.voter_id = ${voterId}::uuid
+            ORDER BY b.id DESC
+            LIMIT 1
+          )
           ORDER BY o.position
         ) AS my_choices
       FROM polls p
       WHERE p.id = ${pollId}
-    `) as ({ id: string; question: string; my_choices: string[] } & PollStateRow)[];
+    `) as ({ id: string; question: string; uses_codes: boolean; my_choices: string[] } & PollStateRow)[];
     if (!poll) return null;
     if (poll.status === "archived") return { id: poll.id, status: "archived" };
 
-    const base = { id: poll.id, question: poll.question, myChoices: poll.my_choices };
+    const base = {
+      id: poll.id,
+      question: poll.question,
+      myChoices: poll.my_choices,
+      usesCodes: poll.uses_codes,
+    };
 
     if (poll.status === "scheduled" || poll.status === "open") {
       const options = (await sql`
@@ -420,10 +454,21 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   async function getPollForAdmin(pollId: string): Promise<AdminPoll | null> {
     const at = readClock();
     const [poll] = (await sql`
-      SELECT p.id, p.question, p.listed, ${pollState(at)}
+      SELECT
+        p.id, p.question, p.listed, p.uses_codes, ${pollState(at)},
+        (SELECT count(*)::int FROM participation_codes c WHERE c.poll_id = p.id) AS codes_issued,
+        (SELECT count(*)::int FROM participation_codes c WHERE c.poll_id = p.id AND c.used_at IS NOT NULL)
+          AS codes_used
       FROM polls p
       WHERE p.id = ${pollId}
-    `) as ({ id: string; question: string; listed: boolean } & PollStateRow)[];
+    `) as ({
+      id: string;
+      question: string;
+      listed: boolean;
+      uses_codes: boolean;
+      codes_issued: number;
+      codes_used: number;
+    } & PollStateRow)[];
     if (!poll) return null;
     // countVotes returns options in creation order, which the template keeps.
     const votes = (await countVotes(pollId)).get(pollId) ?? [];
@@ -436,10 +481,12 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       deadline: poll.deadline,
       closedAt: poll.closed_at,
       ranking: computeRanking(votes),
+      codes: poll.uses_codes ? { issued: poll.codes_issued, used: poll.codes_used } : null,
       template: {
         question: poll.question,
         options: votes.map((option) => option.label),
         listed: poll.listed,
+        usesCodes: poll.uses_codes,
       },
     };
   }
@@ -463,7 +510,65 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       ["순위", "선택지", "표 수", "비율(%)"],
       ...options.map((option) => [option.rank, option.label, option.votes, option.percent.toFixed(1)]),
     ];
-    return "\uFEFF" + rows.map((row) => row.map(csvField).join(",")).join("\r\n");
+    return toCsv(rows);
+  }
+
+  /**
+   * 참여 코드 list to hand out: each code, whether it is used, and a personal
+   * link that fills the code in. Null when the poll does not exist.
+   */
+  async function codesCsv(pollId: string, baseUrl: string): Promise<string | null> {
+    const [poll] = await sql`SELECT 1 FROM polls WHERE id = ${pollId}`;
+    if (!poll) return null;
+    const codes = (await sql`
+      SELECT code, used_at IS NOT NULL AS used
+      FROM participation_codes
+      WHERE poll_id = ${pollId}
+      ORDER BY issued_at, code
+    `) as { code: string; used: boolean }[];
+    const link = (code: string) => `${baseUrl}/polls/${pollId}?code=${code}`;
+    return toCsv([
+      ["코드", "사용 여부", "개인 링크"],
+      ...codes.map(({ code, used }) => [code, used ? "사용함" : "미사용", link(code)]),
+    ]);
+  }
+
+  /**
+   * More 참여 코드 for a poll that takes codes, while 시작 전 or 진행 중, up to
+   * 500 in total. The conditions and the insert are one statement.
+   */
+  async function issueCodes(pollId: string, count: number): Promise<IssueCodesResult> {
+    const at = readClock();
+    let issued = 0;
+    // A fresh code colliding with an existing one is skipped; top up the rest.
+    for (let attempt = 0; attempt < 3 && issued < count; attempt++) {
+      const wanted = count - issued;
+      const rows = await sql`
+        INSERT INTO participation_codes (poll_id, code)
+        SELECT p.id, code
+        FROM polls p, unnest(${newCodes(wanted)}::text[]) AS code
+        WHERE p.id = ${pollId}
+          AND p.uses_codes
+          AND NOT ${isClosed(at)}
+          AND ${wanted}::int >= 1
+          AND (SELECT count(*) FROM participation_codes c WHERE c.poll_id = p.id) + ${wanted}::int
+            <= ${POLL_LIMITS.maxCodes}
+        ON CONFLICT DO NOTHING
+        RETURNING 1
+      `;
+      if (rows.length === 0 && issued === 0) break;
+      issued += rows.length;
+    }
+    if (issued > 0) return { ok: true, issued };
+
+    // Only explains the refusal; the INSERT above already decided.
+    const [poll] = (await sql`
+      SELECT p.uses_codes, ${isClosed(at)} AS is_closed FROM polls p WHERE p.id = ${pollId}
+    `) as { uses_codes: boolean; is_closed: boolean }[];
+    if (!poll) return { ok: false, reason: "not_found" };
+    if (!poll.uses_codes) return { ok: false, reason: "codes_disabled" };
+    if (poll.is_closed) return { ok: false, reason: "closed" };
+    return { ok: false, reason: "limit_exceeded" };
   }
 
   /**
@@ -564,15 +669,17 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     return { ok: true };
   }
 
-  // The database enforces every rule (ADR-0005): one statement inserts the
-  // ballot and its choices, so they succeed or fail together. The WHERE clause
-  // rejects polls not taking votes, the partial unique index rejects a second
-  // ballot from the same browser, and the composite FK rejects options from
-  // another poll.
+  // The database enforces every rule (ADR-0005): one statement spends the 참여
+  // 코드 and inserts the ballot and its choices, so they succeed or fail
+  // together (ADR-0007). The WHERE clause rejects polls not taking votes, an
+  // unused code is spent at most once, the partial unique index rejects a
+  // second non-code ballot from the same browser, and the composite FK rejects
+  // options from another poll.
   async function castVote(
     pollId: string,
     optionIds: string[],
     voterId: string,
+    code?: string | null,
   ): Promise<CastVoteResult> {
     // 단일 선택: exactly one option.
     if (optionIds.length !== 1 || !optionIds.every((id) => /^\d{1,18}$/.test(id))) {
@@ -583,11 +690,23 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     let inserted: unknown[];
     try {
       inserted = await sql`
-        WITH ballot AS (
-          INSERT INTO ballots (poll_id, voter_id)
-          SELECT p.id, ${voterId}::uuid
-          FROM polls p
-          WHERE p.id = ${pollId} AND ${acceptsVotes(at)}
+        WITH target AS (
+          SELECT p.id, p.uses_codes FROM polls p WHERE p.id = ${pollId} AND ${acceptsVotes(at)}
+        ),
+        spent AS (
+          UPDATE participation_codes c SET used_at = ${at}
+          FROM target t
+          WHERE t.uses_codes
+            AND c.poll_id = t.id
+            AND c.code = ${normalizeCode(code)}
+            AND c.used_at IS NULL
+          RETURNING 1
+        ),
+        ballot AS (
+          INSERT INTO ballots (poll_id, voter_id, by_code)
+          SELECT t.id, ${voterId}::uuid, t.uses_codes
+          FROM target t
+          WHERE NOT t.uses_codes OR EXISTS (SELECT 1 FROM spent)
           RETURNING id, poll_id
         )
         INSERT INTO ballot_choices (ballot_id, poll_id, option_id)
@@ -603,11 +722,16 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     }
     if (inserted.length > 0) return { ok: true };
 
+    // Only explains the refusal. Which way a code failed is never told (ADR-0007).
     const [poll] = (await sql`
-      SELECT ${hasStarted(at)} AS started FROM polls p WHERE p.id = ${pollId}
-    `) as { started: boolean }[];
+      SELECT ${hasStarted(at)} AS started, ${isClosed(at)} AS is_closed, p.uses_codes
+      FROM polls p
+      WHERE p.id = ${pollId}
+    `) as { started: boolean; is_closed: boolean; uses_codes: boolean }[];
     if (!poll) return { ok: false, reason: "not_found" };
-    return { ok: false, reason: poll.started ? "closed" : "not_started" };
+    if (!poll.started) return { ok: false, reason: "not_started" };
+    if (poll.is_closed || !poll.uses_codes) return { ok: false, reason: "closed" };
+    return { ok: false, reason: "invalid_code" };
   }
 
   return {
@@ -619,6 +743,8 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     reschedule,
     startNow,
     resultsCsv,
+    codesCsv,
+    issueCodes,
     createPoll,
     getPollForVoter,
     castVote,
@@ -633,6 +759,11 @@ const STATUS_LABELS: Record<PollStatus, string> = {
   closed: "마감",
   archived: "보관",
 };
+
+/** CRLF rows with a UTF-8 BOM, so Excel reads Korean. */
+function toCsv(rows: (string | number)[][]): string {
+  return "\uFEFF" + rows.map((row) => row.map(csvField).join(",")).join("\r\n");
+}
 
 /** One CSV field: quoted when it holds a comma, quote or line break, quotes doubled. */
 function csvField(value: string | number): string {
@@ -725,9 +856,13 @@ function validatePoll(
   options: string[],
   deadline: Date | null,
   opensAt: Date | null,
+  codeCount: number,
 ): CreatePollErrors | null {
-  const { questionMaxLength, optionMaxLength, minOptions, maxOptions } = POLL_LIMITS;
+  const { questionMaxLength, optionMaxLength, minOptions, maxOptions, maxCodes } = POLL_LIMITS;
   const errors: CreatePollErrors = {};
+
+  if (!Number.isInteger(codeCount) || codeCount < 0 || codeCount > maxCodes)
+    errors.codeCount = `참여 코드는 1~${maxCodes}개까지 발급할 수 있습니다.`;
 
   if (opensAt && Number.isNaN(opensAt.getTime())) errors.opensAt = "시작 예정 시각이 올바르지 않습니다.";
 
@@ -766,4 +901,25 @@ function newPollId(): string {
   let id = "";
   for (let i = 0; i < 10; i++) id += ID_ALPHABET[randomInt(ID_ALPHABET.length)];
   return id;
+}
+
+/** Upper-case letters and digits without the look-alikes 0, O, 1, I and L. */
+export const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const CODE_LENGTH = 8;
+
+/** `count` distinct 참여 코드 from a cryptographic RNG. */
+function newCodes(count: number): string[] {
+  const codes = new Set<string>();
+  while (codes.size < count) {
+    let code = "";
+    for (let i = 0; i < CODE_LENGTH; i++) code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
+    codes.add(code);
+  }
+  return [...codes];
+}
+
+/** Codes compare without surrounding or inner spaces and case. */
+function normalizeCode(code: string | null | undefined): string | null {
+  const normalized = code?.replace(/\s+/g, "").toUpperCase();
+  return normalized || null;
 }
