@@ -3,7 +3,7 @@ import { getSql } from "@/lib/db";
 import { formatKst, formatRemaining } from "@/lib/kst-time";
 import { createPolls } from "@/lib/polls";
 import { readVoterId } from "@/lib/voter-session";
-import { TallyBars } from "../../tally-bars";
+import { ShareBar } from "../../share-bar";
 import { StatusBadge } from "../../status-badge";
 import { VoteForm } from "./vote-form";
 
@@ -35,7 +35,7 @@ export default async function PollPage({ params }: PageProps<"/polls/[id]">) {
               총 {poll.results.total}표
               {myChoice && ` · 당신의 선택: ${myChoice.label}`}
             </p>
-            <TallyBars tally={poll.results} myChoice={poll.myChoice} />
+            <ShareBar results={poll.results} />
           </>
         )
       ) : myChoice ? (

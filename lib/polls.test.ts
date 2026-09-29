@@ -163,35 +163,52 @@ describe("closePoll", () => {
     expect(await polls.castVote(id, kimbap, bob)).toEqual({ ok: false, reason: "closed" });
   });
 
-  async function closedResults(votesPerOption: number[]) {
+  /** castVotes gives voters[0] the first option that has any votes. */
+  async function closedResults(votesPerOption: number[], voterId: string | null = null) {
     const id = await createOpenPoll("점심?", ["김밥", "라면", "돈가스"]);
     await castVotes(id, votesPerOption);
     await polls.closePoll(id);
-    const poll = await polls.getPollForVoter(id, null);
+    const poll = await polls.getPollForVoter(id, voterId);
     if (poll?.status !== "closed") throw new Error("마감되지 않음");
     return poll.results;
   }
 
-  it("결과는 생성 순서대로 득표수, 소수점 첫째 자리 비율, 최다 득표를 담는다", async () => {
-    const results = await closedResults([2, 1, 0]);
+  it("결과는 득표순으로 득표수, 소수점 첫째 자리 비율, 최다 득표를 담는다", async () => {
+    const results = await closedResults([1, 2, 0]);
 
     expect(results.total).toBe(3);
     expect(results.options.map(({ label, votes, percent, isTop }) => [label, votes, percent, isTop]))
       .toEqual([
-        ["김밥", 2, 66.7, true],
-        ["라면", 1, 33.3, false],
+        ["라면", 2, 66.7, true],
+        ["김밥", 1, 33.3, false],
         ["돈가스", 0, 0, false],
       ]);
   });
 
-  it("동점이면 최다 득표 선택지를 모두 표시한다", async () => {
+  it("동점이면 최다 득표를 모두 표시하고, 동점끼리는 생성 순서를 따른다", async () => {
     const results = await closedResults([1, 0, 1]);
 
-    expect(results.options.map((option) => [option.percent, option.isTop])).toEqual([
-      [50, true],
-      [0, false],
-      [50, true],
+    expect(results.options.map((option) => [option.label, option.percent, option.isTop])).toEqual([
+      ["김밥", 50, true],
+      ["돈가스", 50, true],
+      ["라면", 0, false],
     ]);
+  });
+
+  it("결과에서 이 투표자가 고른 선택지를 표시한다", async () => {
+    const results = await closedResults([1, 2, 0], voters[0]);
+
+    expect(results.options.map((option) => [option.label, option.isMine])).toEqual([
+      ["라면", false],
+      ["김밥", true],
+      ["돈가스", false],
+    ]);
+  });
+
+  it("투표하지 않은 사람의 결과에는 내 선택이 없다", async () => {
+    const results = await closedResults([1, 2, 0], bob);
+
+    expect(results.options.every((option) => !option.isMine)).toBe(true);
   });
 
   it("이미 마감된 투표를 다시 마감해도 성공하고, 없는 투표는 없음을 알린다", async () => {

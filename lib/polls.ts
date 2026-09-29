@@ -31,6 +31,15 @@ export type VoteTally = { total: number; options: OptionTally[] };
 
 export type AdminPollSummary = PollSummary & { tally: VoteTally };
 
+/**
+ * 결과 as voters see it: each option's share, largest first (ties keep
+ * creation order), with the voter's own choice marked.
+ */
+export type ShareResults = {
+  total: number;
+  options: (OptionTally & { isMine: boolean })[];
+};
+
 type VoterPollBase = {
   id: string;
   question: string;
@@ -42,7 +51,7 @@ type VoterPollBase = {
 /** Results exist only once closed: an open poll carries no numbers at all (ADR-0002). */
 export type VoterPoll =
   | (VoterPollBase & { status: "open"; deadline: Date })
-  | (VoterPollBase & { status: "closed"; closedAt: Date; results: VoteTally });
+  | (VoterPollBase & { status: "closed"; closedAt: Date; results: ShareResults });
 
 /** `deadline` is an absolute instant (null when the form sent nothing usable). */
 export type CreatePollInput = { question: string; options: string[]; deadline: Date | null };
@@ -163,7 +172,10 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       return { ...base, options, status: "open", deadline: poll.deadline };
     }
 
-    const results = computeTally((await countVotes(pollId)).get(pollId) ?? []);
+    const results = computeShare(
+      computeTally((await countVotes(pollId)).get(pollId) ?? []),
+      poll.my_choice,
+    );
     const options = results.options.map(({ id, label }) => ({ id, label }));
     return { ...base, options, status: "closed", closedAt: poll.closed_at!, results };
   }
@@ -266,6 +278,16 @@ function computeTally(options: OptionVotes[]): VoteTally {
       percent: total === 0 ? 0 : Math.round((option.votes / total) * 1000) / 10,
       isTop: top > 0 && option.votes === top,
     })),
+  };
+}
+
+/** Sorts by votes, largest first; the sort is stable, so ties keep creation order. */
+function computeShare(tally: VoteTally, myChoice: string | null): ShareResults {
+  return {
+    total: tally.total,
+    options: tally.options
+      .toSorted((a, b) => b.votes - a.votes)
+      .map((option) => ({ ...option, isMine: option.id === myChoice })),
   };
 }
 
