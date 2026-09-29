@@ -56,7 +56,7 @@ export default function HelpPage() {
             남은 시간을 확인할 수 있고, 시각이 지나면 자동으로 마감됩니다.
           </li>
           <li>
-            <strong>시작 예정</strong>인 투표는 질문과 선택지를 미리 볼 수 있지만, 시작 시각이 되어야
+            <strong>시작 전</strong>인 투표는 질문과 선택지를 미리 볼 수 있지만, 시작 시각이 되어야
             투표할 수 있습니다.
           </li>
           <li>

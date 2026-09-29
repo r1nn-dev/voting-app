@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/admin-session";
 import { getSql } from "@/lib/db";
 import { formatKst, formatRemaining } from "@/lib/kst-time";
@@ -12,6 +12,8 @@ export default async function PresentQrPage({ params }: PageProps<"/admin/polls/
   const { id } = await params;
   const poll = await createPolls(getSql()).getPollForAdmin(id);
   if (!poll) notFound();
+  // 보관 polls are no longer shared (ticket 01).
+  if (poll.status === "archived") redirect(`/admin/polls/${poll.id}`);
 
   const url = await pollUrl(poll.id);
   const qr = await qrSvg(url);
@@ -20,9 +22,7 @@ export default async function PresentQrPage({ params }: PageProps<"/admin/polls/
       ? `${formatKst(poll.opensAt)}에 시작합니다`
       : poll.status === "open"
       ? `${formatKst(poll.deadline)} 마감 · ${formatRemaining(poll.deadline)} 남음`
-      : poll.status === "closed"
-        ? "마감된 투표입니다 · 결과를 볼 수 있어요"
-        : "공개 기간이 끝난 투표입니다";
+      : "마감된 투표입니다 · 결과를 볼 수 있어요";
 
   return (
     // Covers the site header and footer so only the QR view shows.

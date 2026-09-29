@@ -71,7 +71,7 @@ export type RescheduleState = { error?: string };
 const RESCHEDULE_FAILURE_MESSAGES: Record<RescheduleFailure, string> = {
   not_found: "투표가 없거나 삭제되었습니다.",
   started: "이미 시작한 투표는 시작 예정 시각을 바꿀 수 없습니다.",
-  out_of_range: "시작은 지금부터 30일 이내, 마감은 시작부터 10분 뒤 ~ 30일 뒤여야 합니다.",
+  out_of_range: `시작은 지금부터 ${POLL_LIMITS.deadlineMaxDays}일 이내, 마감은 시작부터 ${POLL_LIMITS.deadlineMinMinutes}분 뒤 ~ ${POLL_LIMITS.deadlineMaxDays}일 뒤여야 합니다.`,
 };
 
 /** Moves a 시작 전 poll's times. pollId is a form field (see castVoteAction). */
@@ -120,14 +120,22 @@ export async function issueCodesAction(
   return { issued: result.issued };
 }
 
-/** "지금 바로 시작" for a 시작 전 poll. */
-export async function startNowAction(formData: FormData): Promise<void> {
+const START_NOW_FAILURE_MESSAGES: Record<RescheduleFailure, string> = {
+  not_found: "투표가 없거나 삭제되었습니다.",
+  started: "이미 시작한 투표입니다.",
+  out_of_range: `마감 예정 시각이 지금부터 ${POLL_LIMITS.deadlineMaxDays}일을 넘어 바로 시작할 수 없습니다. 먼저 시각을 바꾸세요.`,
+};
+
+/** "지금 바로 시작" for a 시작 전 poll. pollId is a form field (see castVoteAction). */
+export async function startNowAction(_prev: RescheduleState, formData: FormData): Promise<RescheduleState> {
   await requireAdmin();
 
   const pollId = String(formData.get("pollId") ?? "");
-  await createPolls(getSql()).startNow(pollId);
+  const result = await createPolls(getSql()).startNow(pollId);
+  if (!result.ok) return { error: START_NOW_FAILURE_MESSAGES[result.reason] };
 
   revalidatePollPages(pollId);
+  return {};
 }
 
 /** From the admin detail page, whose poll no longer exists afterwards. */

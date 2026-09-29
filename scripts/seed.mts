@@ -133,12 +133,13 @@ for (const [index, poll] of [...SAMPLE_POLLS].reverse().entries()) {
   const closedAt = poll.closedAgo === undefined ? null : new Date(now - poll.closedAgo);
   await sql`
     INSERT INTO polls (
-      id, question, created_at, opens_at, deadline, closed_at, listed, uses_codes, mode, max_choices
+      id, question, created_at, opens_at, deadline, closed_at, listed, uses_codes, codes_issued,
+      mode, max_choices
     )
     VALUES (
       ${id}, ${poll.question}, ${createdAt},
       ${poll.opensIn === undefined ? createdAt : new Date(now + poll.opensIn)},
-      ${deadline}, ${closedAt}, ${poll.listed ?? true}, ${(poll.codes ?? 0) > 0},
+      ${deadline}, ${closedAt}, ${poll.listed ?? true}, ${(poll.codes ?? 0) > 0}, ${poll.codes ?? 0},
       ${poll.ballots ? "multiple" : "single"}, ${poll.ballots ? (poll.maxChoices ?? poll.options.length) : null}::int
     )
   `;
@@ -158,8 +159,8 @@ for (const [index, poll] of [...SAMPLE_POLLS].reverse().entries()) {
   if (codes.length > 0) {
     // The first codes are the ones the seeded votes spent.
     await sql`
-      INSERT INTO participation_codes (poll_id, code, used_at)
-      SELECT ${id}, code, CASE WHEN ordinality <= ${ballots.length} THEN now() END
+      INSERT INTO participation_codes (poll_id, code, used)
+      SELECT ${id}, code, ordinality <= ${ballots.length}
       FROM unnest(${codes}::text[]) WITH ORDINALITY AS c (code, ordinality)
     `;
   }

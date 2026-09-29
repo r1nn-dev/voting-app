@@ -827,6 +827,20 @@ describe("예약 공개", () => {
     });
   });
 
+  it("startNow는 마감 예정 시각이 지금부터 30일을 넘으면 out_of_range로 거부한다", async () => {
+    const created = await polls.createPoll({
+      question: "q",
+      options: ["a", "b"],
+      opensAt: at(20 * DAY),
+      deadline: at(45 * DAY),
+    });
+    if (!created.ok) throw new Error("투표 생성 실패");
+
+    expect(await polls.startNow(created.id)).toEqual({ ok: false, reason: "out_of_range" });
+    expect((await polls.getPollForAdmin(created.id))?.status).toBe("scheduled");
+    expect(await pollsAt(at(16 * DAY)).startNow(created.id)).toEqual({ ok: true });
+  });
+
   it("startNow는 이미 시작한 투표를 started로, 없는 투표를 not_found로 거부한다", async () => {
     const started = await createOpenPoll();
 
@@ -1060,6 +1074,16 @@ describe("참여 코드", () => {
       expect(link).toBe(`${BASE_URL}/polls/${id}?code=${code}`);
     }
     expect(await polls.codesCsv("nope000000", BASE_URL)).toBeNull();
+  });
+
+  it("사용된 코드에는 표와 이어질 시각이 남지 않는다", async () => {
+    const id = await createCodePoll(1);
+    const [{ code }] = await codesOf(id);
+    await polls.castVote(id, [(await optionIds(id))[0]], alice, code);
+
+    const [row] = await testSql`SELECT * FROM participation_codes WHERE poll_id = ${id}`;
+    expect(Object.keys(row).sort()).toEqual(["code", "issued_at", "poll_id", "used"]);
+    expect(row.used).toBe(true);
   });
 
   it("투표를 삭제하면 코드도 사라진다", async () => {

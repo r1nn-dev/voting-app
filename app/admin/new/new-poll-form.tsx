@@ -37,7 +37,7 @@ export function NewPollForm({
   template = null,
 }: {
   initialDeadline: string;
-  /** Pre-filled 예약 time (KST), used only when the admin picks 예약. */
+  /** Pre-filled 시작 예정 시각 (KST), used only when the admin picks 시각 지정. */
   initialOpensAt: string;
   template?: PollTemplate | null;
 }) {
@@ -88,7 +88,7 @@ export function NewPollForm({
           {(
             [
               ["now", "바로 시작"],
-              ["later", "예약"],
+              ["later", "시각 지정"],
             ] as const
           ).map(([value, text]) => (
             <label key={value} className="flex cursor-pointer items-center gap-2 text-sm font-medium">
@@ -316,7 +316,8 @@ export function NewPollForm({
             최대 선택 수
             <select
               name="maxChoices"
-              value={maxChoices}
+              // A pick above the current option count falls back to 전부.
+              value={Number(maxChoices) <= options.length ? maxChoices : ""}
               onChange={(event) => setMaxChoices(event.target.value)}
               className={`${inputClass} w-auto`}
             >

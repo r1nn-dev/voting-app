@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { POLL_LIMITS } from "@/lib/poll-limits";
 import { buttonPrimary, fieldError, hint, input, label } from "../../../ui";
 import { rescheduleAction } from "../../poll-actions";
 
@@ -31,8 +32,8 @@ export function RescheduleForm({
         </label>
       </div>
       <p className={hint}>
-        아직 표가 없어서 앞당기거나 미룰 수 있습니다. 마감 예정 시각은 시작 예정 시각부터 10분 뒤 ~
-        30일 뒤여야 합니다.
+        아직 표가 없어서 앞당기거나 미룰 수 있습니다. 마감 예정 시각은 시작 예정 시각부터{" "}
+        {POLL_LIMITS.deadlineMinMinutes}분 뒤 ~ {POLL_LIMITS.deadlineMaxDays}일 뒤여야 합니다.
       </p>
       {state.error && (
         <p aria-live="polite" className={fieldError}>

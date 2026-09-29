@@ -17,11 +17,11 @@ import {
   closePollAction,
   deletePollAndReturnToListAction,
   setListedAction,
-  startNowAction,
 } from "../../poll-actions";
 import { ExtendDeadlineForm } from "./extend-deadline-form";
 import { IssueCodesForm } from "./issue-codes-form";
 import { RescheduleForm } from "./reschedule-form";
+import { StartNowForm } from "./start-now-form";
 import { RankChart } from "./rank-chart";
 
 export default async function AdminPollPage({ params }: PageProps<"/admin/polls/[id]">) {
@@ -90,10 +90,7 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
                 {formatRemaining(poll.opensAt)} 후 시작합니다. 시작 전에는 표를 받지 않습니다.
               </p>
             </div>
-            <form action={startNowAction}>
-              <input type="hidden" name="pollId" value={poll.id} />
-              <button className={buttonSecondary}>지금 바로 시작</button>
-            </form>
+            <StartNowForm pollId={poll.id} />
           </div>
           <div className="mt-5 border-t border-zinc-100 pt-5 dark:border-zinc-800">
             <RescheduleForm

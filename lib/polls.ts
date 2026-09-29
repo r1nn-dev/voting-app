@@ -255,9 +255,11 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   const hasStarted = (at: Instant) => sql`(p.opens_at <= ${at})`;
   /** 진행 중: started and not closed, the only state that takes votes. */
   const acceptsVotes = (at: Instant) => sql`(${hasStarted(at)} AND NOT ${isClosed(at)})`;
+  /** 시작 전: not started and not closed, the only state whose times can move. */
+  const isScheduled = (at: Instant) => sql`(NOT ${hasStarted(at)} AND NOT ${isClosed(at)})`;
   const pollState = (at: Instant) => sql`
     CASE
-      WHEN NOT ${isClosed(at)} AND NOT ${hasStarted(at)} THEN 'scheduled'
+      WHEN ${isScheduled(at)} THEN 'scheduled'
       WHEN NOT ${isClosed(at)} THEN 'open'
       WHEN least(p.closed_at, p.deadline) + ${`${POLL_LIMITS.publicDays} days`}::interval <= ${at}
         THEN 'archived'
@@ -339,10 +341,12 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     // The time ranges are checked here, against the same "now" as every judgement.
     const inserted = await sql`
       WITH poll AS (
-        INSERT INTO polls (id, question, opens_at, deadline, listed, uses_codes, mode, max_choices)
+        INSERT INTO polls (
+          id, question, opens_at, deadline, listed, uses_codes, codes_issued, mode, max_choices
+        )
         SELECT
           ${id}, ${question}, ${opens}, ${deadline}, ${input.listed ?? true}, ${codeCount > 0},
-          ${mode}, ${maxChoices}::int
+          ${codeCount}, ${mode}, ${maxChoices}::int
         WHERE ${ranges.opensOk} AND ${ranges.deadlineOk}
         RETURNING id
       ),
@@ -509,9 +513,8 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     const [poll] = (await sql`
       SELECT
         p.id, p.question, p.listed, p.uses_codes, ${modeColumns}, ${pollState(at)},
-        (SELECT count(*)::int FROM participation_codes c WHERE c.poll_id = p.id) AS codes_issued,
-        (SELECT count(*)::int FROM participation_codes c WHERE c.poll_id = p.id AND c.used_at IS NOT NULL)
-          AS codes_used
+        p.codes_issued,
+        (SELECT count(*)::int FROM participation_codes c WHERE c.poll_id = p.id AND c.used) AS codes_used
       FROM polls p
       WHERE p.id = ${pollId}
     `) as ({
@@ -578,7 +581,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     const [poll] = await sql`SELECT 1 FROM polls WHERE id = ${pollId}`;
     if (!poll) return null;
     const codes = (await sql`
-      SELECT code, used_at IS NOT NULL AS used
+      SELECT code, used
       FROM participation_codes
       WHERE poll_id = ${pollId}
       ORDER BY issued_at, code
@@ -592,31 +595,37 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
 
   /**
    * More 참여 코드 for a poll that takes codes, while 시작 전 or 진행 중, up to
-   * 500 in total. The conditions and the insert are one statement.
+   * 500 in total. One statement: raising the counter (re-checked on the latest
+   * row, so concurrent issuances cannot pass the cap together) and inserting
+   * the codes succeed or fail together.
    */
   async function issueCodes(pollId: string, count: number): Promise<IssueCodesResult> {
+    if (!Number.isInteger(count) || count < 1) return { ok: false, reason: "limit_exceeded" };
     const at = readClock();
-    let issued = 0;
-    // A fresh code colliding with an existing one is skipped; top up the rest.
-    for (let attempt = 0; attempt < 3 && issued < count; attempt++) {
-      const wanted = count - issued;
-      const rows = await sql`
-        INSERT INTO participation_codes (poll_id, code)
-        SELECT p.id, code
-        FROM polls p, unnest(${newCodes(wanted)}::text[]) AS code
-        WHERE p.id = ${pollId}
-          AND p.uses_codes
-          AND NOT ${isClosed(at)}
-          AND ${wanted}::int >= 1
-          AND (SELECT count(*) FROM participation_codes c WHERE c.poll_id = p.id) + ${wanted}::int
-            <= ${POLL_LIMITS.maxCodes}
-        ON CONFLICT DO NOTHING
-        RETURNING 1
-      `;
-      if (rows.length === 0 && issued === 0) break;
-      issued += rows.length;
+    // A fresh code colliding with an existing one fails the whole statement; retry with new ones.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let rows: unknown[];
+      try {
+        rows = await sql`
+          WITH raised AS (
+            UPDATE polls p SET codes_issued = p.codes_issued + ${count}::int
+            WHERE p.id = ${pollId}
+              AND p.uses_codes
+              AND NOT ${isClosed(at)}
+              AND p.codes_issued + ${count}::int <= ${POLL_LIMITS.maxCodes}
+            RETURNING p.id
+          )
+          INSERT INTO participation_codes (poll_id, code)
+          SELECT raised.id, code FROM raised, unnest(${newCodes(count)}::text[]) AS code
+          RETURNING 1
+        `;
+      } catch (error) {
+        if ((error as { code?: string }).code === UNIQUE_VIOLATION) continue;
+        throw error;
+      }
+      if (rows.length > 0) return { ok: true, issued: rows.length };
+      break;
     }
-    if (issued > 0) return { ok: true, issued };
 
     // Only explains the refusal; the INSERT above already decided.
     const [poll] = (await sql`
@@ -678,8 +687,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     const [moved] = await sql`
       UPDATE polls p SET opens_at = ${opens}, deadline = ${deadline}
       WHERE p.id = ${pollId}
-        AND NOT ${hasStarted(at)}
-        AND NOT ${isClosed(at)}
+        AND ${isScheduled(at)}
         AND ${ranges.opensOk}
         AND ${ranges.deadlineOk}
       RETURNING 1
@@ -688,27 +696,33 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
 
     // Only explains the refusal; the UPDATE above already decided.
     const [poll] = (await sql`
-      SELECT (${hasStarted(at)} OR ${isClosed(at)}) AS started FROM polls p WHERE p.id = ${pollId}
-    `) as { started: boolean }[];
+      SELECT ${isScheduled(at)} AS scheduled FROM polls p WHERE p.id = ${pollId}
+    `) as { scheduled: boolean }[];
     if (!poll) return { ok: false, reason: "not_found" };
-    return { ok: false, reason: poll.started ? "started" : "out_of_range" };
+    return { ok: false, reason: poll.scheduled ? "out_of_range" : "started" };
   }
 
   /**
    * "지금 바로 시작": sets the 시작 예정 시각 to the database's now, so an app
    * clock slightly behind can never make it look like the past (ADR-0006). The
-   * deadline stays: it is already more than 10 minutes after the old start.
+   * deadline stays, so it must still be within the range from the new start.
    */
-  async function startNow(pollId: string): Promise<{ ok: true } | { ok: false; reason: "not_found" | "started" }> {
+  async function startNow(pollId: string): Promise<RescheduleResult> {
     const at = readClock();
+    const ranges = scheduleRanges(at, at, sql`p.deadline`);
     const [started] = await sql`
       UPDATE polls p SET opens_at = ${at}
-      WHERE p.id = ${pollId} AND NOT ${hasStarted(at)} AND NOT ${isClosed(at)}
+      WHERE p.id = ${pollId} AND ${isScheduled(at)} AND ${ranges.deadlineOk}
       RETURNING 1
     `;
     if (started) return { ok: true };
-    const [poll] = await sql`SELECT 1 FROM polls WHERE id = ${pollId}`;
-    return { ok: false, reason: poll ? "started" : "not_found" };
+
+    // Only explains the refusal; the UPDATE above already decided.
+    const [poll] = (await sql`
+      SELECT ${isScheduled(at)} AS scheduled FROM polls p WHERE p.id = ${pollId}
+    `) as { scheduled: boolean }[];
+    if (!poll) return { ok: false, reason: "not_found" };
+    return { ok: false, reason: poll.scheduled ? "out_of_range" : "started" };
   }
 
   /** 목록 공개 ↔ 링크 전용, in any state: it changes exposure, not the poll's content. */
@@ -761,12 +775,13 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
           WHERE p.id = ${pollId} AND ${acceptsVotes(at)} AND ${withinMode}
         ),
         spent AS (
-          UPDATE participation_codes c SET used_at = ${at}
+          -- No timestamp: it would match the ballot's cast_at (ADR-0007).
+          UPDATE participation_codes c SET used = true
           FROM target t
           WHERE t.uses_codes
             AND c.poll_id = t.id
             AND c.code = ${normalizeCode(code)}
-            AND c.used_at IS NULL
+            AND NOT c.used
           RETURNING 1
         ),
         ballot AS (
