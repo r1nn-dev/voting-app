@@ -5,7 +5,9 @@ import { getSql } from "@/lib/db";
 import { formatKst, formatRemaining } from "@/lib/kst-time";
 import { POLL_LIMITS } from "@/lib/poll-limits";
 import { createPolls } from "@/lib/polls";
+import { pollUrl, qrSvg } from "@/lib/share";
 import { ArrowLeftIcon, ClockIcon } from "../../../icons";
+import { SharePanel } from "../../../share-panel";
 import { StatusBadge } from "../../../status-badge";
 import { backLink, buttonSecondary, card, cardPadding, hint } from "../../../ui";
 import { ConfirmActionButton } from "../../confirm-action-button";
@@ -18,6 +20,8 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
   const { id } = await params;
   const poll = await createPolls(getSql()).getPollForAdmin(id);
   if (!poll) notFound();
+  const url = await pollUrl(poll.id);
+  const qr = await qrSvg(url);
 
   return (
     <div className="flex flex-col gap-6">
@@ -37,9 +41,16 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
             ? `${formatKst(poll.deadline)} 마감 예정 · ${formatRemaining(poll.deadline)} 남음`
             : `${formatKst(poll.closedAt)} 마감됨`}
         </p>
-        <Link href={`/polls/${poll.id}`} className={`${buttonSecondary} mt-4`}>
-          공개 페이지 보기
-        </Link>
+        <div className="mt-4 flex flex-wrap items-start gap-2">
+          <Link href={`/polls/${poll.id}`} className={buttonSecondary}>
+            공개 페이지 보기
+          </Link>
+        </div>
+        {poll.status !== "archived" && (
+          <div className="mt-3">
+            <SharePanel url={url} qrSvg={qr} presentHref={`/admin/polls/${poll.id}/qr`} />
+          </div>
+        )}
       </section>
 
       <RankChart ranking={poll.ranking} openUntil={poll.status === "open" ? poll.deadline : null} />

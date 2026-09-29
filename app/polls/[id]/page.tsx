@@ -5,9 +5,11 @@ import { getSql } from "@/lib/db";
 import { formatKst, formatRemaining } from "@/lib/kst-time";
 import { POLL_LIMITS } from "@/lib/poll-limits";
 import { createPolls } from "@/lib/polls";
+import { pollUrl, qrSvg } from "@/lib/share";
 import { readVoterId } from "@/lib/voter-session";
 import { ArchiveIcon, ArrowLeftIcon, CheckIcon, ClockIcon } from "../../icons";
 import { ShareBar } from "../../share-bar";
+import { SharePanel } from "../../share-panel";
 import { StatusBadge } from "../../status-badge";
 import { backLink, card, cardPadding } from "../../ui";
 import { VoteForm } from "./vote-form";
@@ -48,6 +50,8 @@ export default async function PollPage({ params }: PageProps<"/polls/[id]">) {
   }
 
   const myChoice = poll.options.find((option) => option.id === poll.myChoice);
+  const url = await pollUrl(poll.id);
+  const qr = await qrSvg(url);
 
   return (
     <div className="flex flex-col gap-6">
@@ -67,6 +71,9 @@ export default async function PollPage({ params }: PageProps<"/polls/[id]">) {
             ? `${formatKst(poll.deadline)} 마감 예정 · ${formatRemaining(poll.deadline)} 남음`
             : `${formatKst(poll.closedAt)} 마감됨`}
         </p>
+        <div className="mt-4">
+          <SharePanel url={url} qrSvg={qr} />
+        </div>
 
         <div className="mt-6 border-t border-zinc-100 pt-6 dark:border-zinc-800">
           {poll.status === "closed" ? (
