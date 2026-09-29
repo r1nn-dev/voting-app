@@ -40,7 +40,10 @@ export default async function AdminPage() {
               className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
             >
               <div className="mb-3 flex items-center justify-between gap-4">
-                <Link href={`/polls/${poll.id}`} className="truncate font-medium hover:underline">
+                <Link
+                  href={`/admin/polls/${poll.id}`}
+                  className="truncate font-medium hover:underline"
+                >
                   {poll.question}
                 </Link>
                 <StatusBadge isClosed={poll.isClosed} />

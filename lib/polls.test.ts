@@ -297,6 +297,96 @@ describe("자동 마감", () => {
   });
 });
 
+describe("extendDeadline", () => {
+  it("진행 중인 투표를 연장하면 투표자에게 바뀐 마감 예정 시각이 보인다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(HOUR));
+
+    expect(await polls.extendDeadline(id, at(3 * HOUR))).toEqual({ ok: true });
+
+    const poll = await polls.getPollForVoter(id, null);
+    expect(poll?.status === "open" && poll.deadline).toEqual(at(3 * HOUR));
+  });
+
+  it("원래 마감 예정 시각이 지나도, 연장된 시각 전이면 투표할 수 있다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(HOUR));
+    await polls.extendDeadline(id, at(3 * HOUR));
+    const later = pollsAt(at(2 * HOUR));
+
+    expect((await later.getPollForVoter(id, null))?.status).toBe("open");
+    expect(await later.castVote(id, (await optionIds(id))[0], alice)).toEqual({ ok: true });
+  });
+
+  it("현재 마감 예정 시각보다 늦지 않으면 not_later로 거부하고 바꾸지 않는다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(3 * HOUR));
+
+    expect(await polls.extendDeadline(id, at(3 * HOUR))).toEqual({ ok: false, reason: "not_later" });
+    expect(await polls.extendDeadline(id, at(2 * HOUR))).toEqual({ ok: false, reason: "not_later" });
+    const poll = await polls.getPollForVoter(id, null);
+    expect(poll?.status === "open" && poll.deadline).toEqual(at(3 * HOUR));
+  });
+
+  it("지금부터 30일을 넘기면 out_of_range로 거부하고, 정확히 30일은 받아들인다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(HOUR));
+
+    expect(await polls.extendDeadline(id, at(30 * DAY + 1000))).toEqual({
+      ok: false,
+      reason: "out_of_range",
+    });
+    expect(await polls.extendDeadline(id, at(30 * DAY))).toEqual({ ok: true });
+  });
+
+  it("직접 마감한 투표는 closed로 거부한다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(DAY));
+    await polls.closePoll(id);
+
+    expect(await polls.extendDeadline(id, at(2 * DAY))).toEqual({ ok: false, reason: "closed" });
+  });
+
+  it("마감 예정 시각이 지난 투표는 closed로 거부하고 다시 열리지 않는다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(HOUR));
+    const later = pollsAt(at(2 * HOUR));
+
+    expect(await later.extendDeadline(id, at(DAY))).toEqual({ ok: false, reason: "closed" });
+    expect((await later.getPollForVoter(id, null))?.status).toBe("closed");
+  });
+
+  it("없는 투표는 not_found", async () => {
+    expect(await polls.extendDeadline("nope000000", at(DAY))).toEqual({
+      ok: false,
+      reason: "not_found",
+    });
+  });
+});
+
+describe("getPollForAdmin", () => {
+  it("진행 중인 투표의 질문, 상태, 마감 예정 시각을 보여준다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(DAY));
+
+    expect(await polls.getPollForAdmin(id)).toEqual({
+      id,
+      question: "점심?",
+      status: "open",
+      deadline: at(DAY),
+      closedAt: null,
+    });
+  });
+
+  it("마감된 투표는 마감 시각을 함께 보여준다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(DAY));
+    await pollsAt(at(HOUR)).closePoll(id);
+
+    expect(await pollsAt(at(2 * HOUR)).getPollForAdmin(id)).toMatchObject({
+      status: "closed",
+      deadline: at(DAY),
+      closedAt: at(HOUR),
+    });
+  });
+
+  it("없는 투표는 null", async () => {
+    expect(await polls.getPollForAdmin("nope000000")).toBeNull();
+  });
+});
+
 describe("deletePoll", () => {
   it("표가 있는 투표를 지우면 어디서도 조회되지 않고, 다른 투표는 그대로다", async () => {
     const doomed = await createOpenPoll("지울 투표");

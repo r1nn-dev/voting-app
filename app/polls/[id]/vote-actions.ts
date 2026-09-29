@@ -14,11 +14,10 @@ const FAILURE_MESSAGES: Record<CastVoteFailure, string> = {
   invalid_option: "올바른 선택지를 골라 주세요.",
 };
 
-export async function castVoteAction(
-  pollId: string,
-  _prev: VoteState,
-  formData: FormData,
-): Promise<VoteState> {
+// The poll id travels as a form field, not a bound argument: an action bound
+// in a client component hangs when the form is submitted without JavaScript.
+export async function castVoteAction(_prev: VoteState, formData: FormData): Promise<VoteState> {
+  const pollId = String(formData.get("pollId") ?? "");
   const optionId = formData.get("optionId");
   if (typeof optionId !== "string" || !optionId) {
     return { error: "선택지를 하나 골라 주세요." };

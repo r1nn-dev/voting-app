@@ -5,10 +5,11 @@ import type { PollOption } from "@/lib/polls";
 import { castVoteAction } from "./vote-actions";
 
 export function VoteForm({ pollId, options }: { pollId: string; options: PollOption[] }) {
-  const [state, formAction, pending] = useActionState(castVoteAction.bind(null, pollId), {});
+  const [state, formAction, pending] = useActionState(castVoteAction, {});
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
+      <input type="hidden" name="pollId" value={pollId} />
       <fieldset className="flex flex-col gap-2">
         <legend className="sr-only">선택지</legend>
         {options.map((option) => (

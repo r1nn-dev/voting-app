@@ -70,6 +70,19 @@ export type CreatePollResult =
   | { ok: true; id: string }
   | { ok: false; errors: CreatePollErrors };
 
+export type AdminPoll = {
+  id: string;
+  question: string;
+  status: "open" | "closed";
+  deadline: Date;
+  /** 마감 시각; null while open. */
+  closedAt: Date | null;
+};
+
+export type ExtendDeadlineFailure = "not_found" | "closed" | "not_later" | "out_of_range";
+
+export type ExtendDeadlineResult = { ok: true } | { ok: false; reason: ExtendDeadlineFailure };
+
 export type CastVoteFailure = "not_found" | "closed" | "already_voted" | "invalid_option";
 
 export type CastVoteResult = { ok: true } | { ok: false; reason: CastVoteFailure };
@@ -222,6 +235,51 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     return poll ? { ok: true } : { ok: false, reason: "not_found" };
   }
 
+  /** The admin sees every poll whatever its state. */
+  async function getPollForAdmin(pollId: string): Promise<AdminPoll | null> {
+    const at = readClock();
+    const [poll] = (await sql`
+      SELECT p.id, p.question, ${pollState(at)}
+      FROM polls p
+      WHERE p.id = ${pollId}
+    `) as ({ id: string; question: string } & PollStateRow)[];
+    if (!poll) return null;
+    return {
+      id: poll.id,
+      question: poll.question,
+      status: poll.is_closed ? "closed" : "open",
+      deadline: poll.deadline,
+      closedAt: poll.closed_at,
+    };
+  }
+
+  /**
+   * Moves an open poll's deadline later, up to 30 days from now. One statement,
+   * so a close racing with an extension can never reopen the poll (ADR-0006).
+   */
+  async function extendDeadline(pollId: string, newDeadline: Date): Promise<ExtendDeadlineResult> {
+    const at = readClock();
+    const deadline = newDeadline.toISOString();
+    const [extended] = await sql`
+      UPDATE polls p SET deadline = ${deadline}::timestamptz
+      WHERE p.id = ${pollId}
+        AND NOT ${isClosed(at)}
+        AND ${deadline}::timestamptz > p.deadline
+        AND ${deadline}::timestamptz <= ${at} + ${`${POLL_LIMITS.deadlineMaxDays} days`}::interval
+      RETURNING 1
+    `;
+    if (extended) return { ok: true };
+
+    const [poll] = (await sql`
+      SELECT ${isClosed(at)} AS is_closed, ${deadline}::timestamptz > p.deadline AS is_later
+      FROM polls p
+      WHERE p.id = ${pollId}
+    `) as { is_closed: boolean; is_later: boolean }[];
+    if (!poll) return { ok: false, reason: "not_found" };
+    if (poll.is_closed) return { ok: false, reason: "closed" };
+    return { ok: false, reason: poll.is_later ? "out_of_range" : "not_later" };
+  }
+
   /** Hard delete; options and votes cascade. Deleting a missing poll succeeds. */
   async function deletePoll(pollId: string): Promise<{ ok: true }> {
     await sql`DELETE FROM polls WHERE id = ${pollId}`;
@@ -259,6 +317,8 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   return {
     listPolls,
     listPollsForAdmin,
+    getPollForAdmin,
+    extendDeadline,
     createPoll,
     getPollForVoter,
     castVote,
