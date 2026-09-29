@@ -1,5 +1,6 @@
 import { randomInt } from "node:crypto";
 import type { Sql } from "./db";
+import { formatKst } from "./kst-time";
 import { POLL_LIMITS } from "./poll-limits";
 
 /** open → closed (by hand or deadline) → archived (30 days after 마감 시각). */
@@ -135,7 +136,11 @@ export type AdminPoll = {
   closedAt: Date | null;
   /** 득표 현황 while open, 결과 once closed; the admin sees it either way. */
   ranking: Ranking;
+  /** What 복제 copies into a new poll form: never votes or times. */
+  template: PollTemplate;
 };
+
+export type PollTemplate = { question: string; options: string[]; listed: boolean };
 
 export type ExtendDeadlineFailure = "not_found" | "closed" | "not_later" | "out_of_range";
 
@@ -333,6 +338,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       WHERE p.id = ${pollId}
     `) as ({ id: string; question: string; listed: boolean } & PollStateRow)[];
     if (!poll) return null;
+    // countVotes returns options in creation order, which the template keeps.
     const votes = (await countVotes(pollId)).get(pollId) ?? [];
     return {
       id: poll.id,
@@ -342,7 +348,33 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       deadline: poll.deadline,
       closedAt: poll.closed_at,
       ranking: computeRanking(votes),
+      template: {
+        question: poll.question,
+        options: votes.map((option) => option.label),
+        listed: poll.listed,
+      },
     };
+  }
+
+  /**
+   * 결과 (or 득표 현황 before close) as CSV for spreadsheets: a UTF-8 BOM so
+   * Excel reads Korean, poll facts, then options by votes. No voter data.
+   */
+  async function resultsCsv(pollId: string): Promise<string | null> {
+    const poll = await getPollForAdmin(pollId);
+    if (!poll) return null;
+    const { options, summary } = poll.ranking;
+    const rows: (string | number)[][] = [
+      ["질문", poll.question],
+      ["상태", STATUS_LABELS[poll.status]],
+      ["마감 예정 시각", formatKst(poll.deadline)],
+      ["마감 시각", poll.closedAt ? formatKst(poll.closedAt) : ""],
+      ["총 표 수", summary.total],
+      [],
+      ["순위", "선택지", "표 수", "비율(%)"],
+      ...options.map((option) => [option.rank, option.label, option.votes, option.percent.toFixed(1)]),
+    ];
+    return "\uFEFF" + rows.map((row) => row.map(csvField).join(",")).join("\r\n");
   }
 
   /**
@@ -424,12 +456,25 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     getPollForAdmin,
     extendDeadline,
     setListed,
+    resultsCsv,
     createPoll,
     getPollForVoter,
     castVote,
     closePoll,
     deletePoll,
   };
+}
+
+const STATUS_LABELS: Record<PollStatus, string> = {
+  open: "진행 중",
+  closed: "마감",
+  archived: "보관",
+};
+
+/** One CSV field: quoted when it holds a comma, quote or line break, quotes doubled. */
+function csvField(value: string | number): string {
+  const text = String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
 /** Every option with the most votes; empty when nobody has voted. */

@@ -53,6 +53,12 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
           <Link href={`/polls/${poll.id}`} className={buttonSecondary}>
             공개 페이지 보기
           </Link>
+          <a href={`/admin/polls/${poll.id}/results`} className={buttonSecondary}>
+            결과 CSV 받기
+          </a>
+          <Link href={`/admin/new?from=${poll.id}`} className={buttonSecondary}>
+            복제
+          </Link>
           <form action={setListedAction}>
             <input type="hidden" name="pollId" value={poll.id} />
             <input type="hidden" name="listed" value={poll.listed ? "false" : "true"} />

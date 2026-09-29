@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { kstInputFromNow } from "@/lib/kst-time";
 import { POLL_LIMITS } from "@/lib/poll-limits";
+import type { PollTemplate } from "@/lib/polls";
 import { PlusIcon, XIcon } from "../../icons";
 import {
   buttonPrimary,
@@ -17,7 +18,7 @@ import {
 import { createPollAction } from "../poll-actions";
 
 let nextKey = 0;
-const newOption = () => ({ key: nextKey++, value: "" });
+const newOption = (value = "") => ({ key: nextKey++, value });
 
 const HOUR = 60 * 60 * 1000;
 const QUICK_DEADLINES = [
@@ -26,14 +27,25 @@ const QUICK_DEADLINES = [
   { label: "1주", ms: 7 * 24 * HOUR },
 ];
 
-/** `initialDeadline` comes from the server so the first render matches on both sides. */
-export function NewPollForm({ initialDeadline }: { initialDeadline: string }) {
+/**
+ * `initialDeadline` comes from the server so the first render matches on both
+ * sides. `template` pre-fills the form when duplicating a poll (복제).
+ */
+export function NewPollForm({
+  initialDeadline,
+  template = null,
+}: {
+  initialDeadline: string;
+  template?: PollTemplate | null;
+}) {
   const [state, formAction, pending] = useActionState(createPollAction, {});
   // Controlled inputs keep what the admin typed when validation fails.
-  const [question, setQuestion] = useState("");
-  const [options, setOptions] = useState(() => [newOption(), newOption()]);
+  const [question, setQuestion] = useState(template?.question ?? "");
+  const [options, setOptions] = useState(() =>
+    template ? template.options.map((label) => newOption(label)) : [newOption(), newOption()],
+  );
   const [deadline, setDeadline] = useState(initialDeadline);
-  const [listed, setListed] = useState("true");
+  const [listed, setListed] = useState(template && !template.listed ? "false" : "true");
   const errors = state.errors;
 
   return (

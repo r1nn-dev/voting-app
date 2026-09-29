@@ -630,6 +630,65 @@ describe("링크 전용", () => {
   });
 });
 
+describe("resultsCsv", () => {
+  it("BOM으로 시작하고, 투표 정보와 선택지별 순위·표 수·비율을 득표순으로 담는다", async () => {
+    const id = await createOpenPoll("점심?", ["김밥", "라면", "돈가스"], at(HOUR));
+    await castVotes(id, [1, 2, 0]);
+
+    const csv = await pollsAt(at(2 * HOUR)).resultsCsv(id);
+
+    expect(csv?.startsWith("\uFEFF")).toBe(true);
+    const lines = csv!.slice(1).split("\r\n");
+    expect(lines).toContain("질문,점심?");
+    expect(lines).toContain("상태,마감");
+    expect(lines).toContain("총 표 수,3");
+    expect(lines.slice(lines.indexOf("순위,선택지,표 수,비율(%)"))).toEqual([
+      "순위,선택지,표 수,비율(%)",
+      "1,라면,2,66.7",
+      "2,김밥,1,33.3",
+      "3,돈가스,0,0.0",
+    ]);
+  });
+
+  it("쉼표·따옴표가 든 값은 CSV 규칙대로 감싸고, 투표자 식별 값은 담지 않는다", async () => {
+    const id = await createOpenPoll('A, "B"?', ["x,y", 'say "hi"']);
+    await castVotes(id, [1, 0]);
+
+    const csv = (await polls.resultsCsv(id))!;
+
+    expect(csv).toContain('질문,"A, ""B""?"');
+    expect(csv).toContain('1,"x,y",1,100.0');
+    expect(csv).toContain('2,"say ""hi""",0,0.0');
+    expect(csv).not.toContain(voters[0]);
+  });
+
+  it("마감 전에도 만들고, 없는 투표는 null", async () => {
+    const id = await createOpenPoll();
+
+    expect(await polls.resultsCsv(id)).toContain("상태,진행 중");
+    expect(await polls.resultsCsv("nope000000")).toBeNull();
+  });
+});
+
+describe("복제용 설정", () => {
+  it("질문, 선택지(생성 순서), 공개 방식을 돌려준다", async () => {
+    const created = await polls.createPoll({
+      question: "점심?",
+      options: ["김밥", "라면", "돈가스"],
+      deadline: at(DAY),
+      listed: false,
+    });
+    if (!created.ok) throw new Error("투표 생성 실패");
+    await castVotes(created.id, [0, 0, 2]);
+
+    expect((await polls.getPollForAdmin(created.id))?.template).toEqual({
+      question: "점심?",
+      options: ["김밥", "라면", "돈가스"],
+      listed: false,
+    });
+  });
+});
+
 describe("deletePoll", () => {
   it("표가 있는 투표를 지우면 어디서도 조회되지 않고, 다른 투표는 그대로다", async () => {
     const doomed = await createOpenPoll("지울 투표");
