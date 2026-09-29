@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Noto_Sans_KR } from "next/font/google";
 import Link from "next/link";
+import { isAdmin } from "@/lib/admin-session";
+import { HeaderNav } from "./header-nav";
 import { LogoMark } from "./icons";
 import { SERVICE_NAME, SERVICE_TAGLINE, SiteFooter } from "./site-footer";
 import { container } from "./ui";
@@ -19,7 +21,7 @@ export const metadata: Metadata = {
   description: SERVICE_TAGLINE,
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="ko" className={`${notoSansKr.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col">
@@ -29,12 +31,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <LogoMark />
               {SERVICE_NAME}
             </Link>
-            <Link
-              href="/admin"
-              className="rounded-full px-3 py-1.5 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-            >
-              관리자
-            </Link>
+            <HeaderNav signedIn={await isSignedIn()} />
           </div>
         </header>
         <main className={`${container} flex-1 pt-8`}>{children}</main>
@@ -42,4 +39,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </body>
     </html>
   );
+}
+
+/** Header hint only: a missing admin env var must not take public pages down with it. */
+async function isSignedIn(): Promise<boolean> {
+  try {
+    return await isAdmin();
+  } catch {
+    return false;
+  }
 }

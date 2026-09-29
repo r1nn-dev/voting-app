@@ -5,8 +5,7 @@ import { formatDaysLeft, formatKst, formatRemaining } from "@/lib/kst-time";
 import { createPolls, type AdminListItem, type PollStatus } from "@/lib/polls";
 import { ChevronRightIcon, PlusIcon } from "../icons";
 import { StatusBadge } from "../status-badge";
-import { buttonGhost, buttonPrimary, card } from "../ui";
-import { logout } from "./auth-actions";
+import { buttonPrimary, card } from "../ui";
 
 const TABS = [
   { key: "open", label: "진행 중", empty: "진행 중인 투표가 없습니다." },
@@ -36,14 +35,9 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
             마감 전에도 득표 현황을 볼 수 있습니다.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <form action={logout}>
-            <button className={buttonGhost}>로그아웃</button>
-          </form>
-          <Link href="/admin/new" className={buttonPrimary}>
-            <PlusIcon className="size-4" />새 투표
-          </Link>
-        </div>
+        <Link href="/admin/new" className={buttonPrimary}>
+          <PlusIcon className="size-4" />새 투표
+        </Link>
       </div>
 
       <nav className="flex gap-1 self-start rounded-xl bg-zinc-200/60 p-1 dark:bg-zinc-800/80">
