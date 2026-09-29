@@ -1,12 +1,9 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/admin-session";
 import { getSql } from "@/lib/db";
-import { formatKst, formatRemaining } from "@/lib/kst-time";
-import { POLL_LIMITS } from "@/lib/poll-limits";
+import { formatDaysLeft, formatKst, formatRemaining } from "@/lib/kst-time";
 import { createPolls, type AdminListItem } from "@/lib/polls";
 import { logout } from "./auth-actions";
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 const TABS = [
   { key: "open", label: "진행 중", empty: "진행 중인 투표가 없습니다." },
@@ -73,20 +70,19 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
                   when={`${formatKst(poll.deadline)} 마감 예정 · ${formatRemaining(poll.deadline)} 남음`}
                 />
               ))
-            : lists[current].map((poll) => (
-                <PollRow
-                  key={poll.id}
-                  poll={poll}
-                  when={`${formatKst(poll.closedAt)} 마감됨`}
-                  note={
-                    current === "closed"
-                      ? `보관까지 ${formatRemaining(
-                          new Date(poll.closedAt.getTime() + POLL_LIMITS.publicDays * DAY_MS),
-                        )}`
-                      : undefined
-                  }
-                />
-              ))}
+            : current === "closed"
+              ? lists.closed.map((poll) => (
+                  <PollRow
+                    key={poll.id}
+                    poll={poll}
+                    when={`${formatKst(poll.closedAt)} 마감됨`}
+                    // When it archives is the poll module's call; this only counts the days.
+                    note={`보관까지 ${formatDaysLeft(poll.archivesAt)}`}
+                  />
+                ))
+              : lists.archived.map((poll) => (
+                  <PollRow key={poll.id} poll={poll} when={`${formatKst(poll.closedAt)} 마감됨`} />
+                ))}
         </ul>
       )}
     </section>

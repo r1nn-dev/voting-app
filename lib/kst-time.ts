@@ -57,6 +57,12 @@ export function formatRemaining(until: Date, from: Date = new Date()): string {
   return `${Math.floor(hours / 24)}일`;
 }
 
+/** Whole days left, rounded up and at least 1: "30일" for 29.9 days, "1일" for 5 hours. */
+export function formatDaysLeft(until: Date, from: Date = new Date()): string {
+  const days = Math.ceil((until.getTime() - from.getTime()) / 86_400_000);
+  return `${Math.max(1, days)}일`;
+}
+
 /** Value for <input type="datetime-local">, in KST: "2026-10-03T18:00". */
 export function toKstInputValue(date: Date): string {
   const { year, month, day, hour, minute } = kstParts(date);

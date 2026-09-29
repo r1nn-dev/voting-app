@@ -8,7 +8,7 @@ export type PollStatus = "open" | "closed" | "archived";
 /** A poll's state as every list sees it; only closed and archived polls have a 마감 시각. */
 type PollSummary = { id: string; question: string; deadline: Date } & (
   | { status: "open" }
-  | { status: "closed" | "archived"; closedAt: Date }
+  | { status: "closed" | "archived"; closedAt: Date; archivesAt: Date }
 );
 
 export type PollOption = { id: string; label: string };
@@ -41,8 +41,8 @@ export type AdminListItem = {
 export type AdminPollList = {
   /** By nearest deadline. */
   open: AdminListItem[];
-  /** Closed and still public, by latest 마감 시각. */
-  closed: (AdminListItem & { closedAt: Date })[];
+  /** Closed and still public, by latest 마감 시각; `archivesAt` is when it becomes 보관. */
+  closed: (AdminListItem & { closedAt: Date; archivesAt: Date })[];
   /** Past the public period, by latest 마감 시각. */
   archived: (AdminListItem & { closedAt: Date })[];
 };
@@ -144,7 +144,12 @@ type PollsOptions = {
   now?: () => Date;
 };
 
-type PollStateRow = { status: PollStatus; deadline: Date; closed_at: Date | null };
+type PollStateRow = {
+  status: PollStatus;
+  deadline: Date;
+  closed_at: Date | null;
+  archives_at: Date | null;
+};
 
 export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   // The single definition of "now", "closed", "마감 시각" and "archived" (ADR-0006). Each
@@ -163,7 +168,10 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       ELSE 'closed'
     END AS status,
     p.deadline,
-    CASE WHEN ${isClosed(at)} THEN least(p.closed_at, p.deadline) END AS closed_at
+    CASE WHEN ${isClosed(at)} THEN least(p.closed_at, p.deadline) END AS closed_at,
+    CASE WHEN ${isClosed(at)}
+      THEN least(p.closed_at, p.deadline) + ${`${POLL_LIMITS.publicDays} days`}::interval
+    END AS archives_at
   `;
 
   /** Every poll with its state, newest first. */
@@ -174,10 +182,11 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       FROM polls p
       ORDER BY p.created_at DESC, p.id DESC
     `) as ({ id: string; question: string } & PollStateRow)[];
-    return rows.map(({ id, question, status, deadline, closed_at }) =>
+    // closed_at and archives_at are set exactly when the poll is not open (pollState).
+    return rows.map(({ id, question, status, deadline, closed_at, archives_at }) =>
       status === "open"
         ? { id, question, deadline, status }
-        : { id, question, deadline, status, closedAt: closed_at! },
+        : { id, question, deadline, status, closedAt: closed_at!, archivesAt: archives_at! },
     );
   }
 
@@ -253,18 +262,21 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     return { ...base, options, status: "closed", closedAt: poll.closed_at!, results };
   }
 
-  /** Admins see 득표 현황 at any time, to judge when to close. */
+  /** The admin list in three groups, each row with its total and current leaders, before close too. */
   async function listPollsForAdmin(): Promise<AdminPollList> {
     const { open, closed, archived } = groupByStatus(await listAll());
     const votesByPoll = await countVotes(null);
     const item = ({ id, question, deadline }: PollSummary): AdminListItem => {
       const tally = computeTally(votesByPoll.get(id) ?? []);
-      const leaders = tally.options.filter((o) => o.isTop).map((o) => ({ id: o.id, label: o.label }));
-      return { id, question, deadline, total: tally.total, leaders };
+      return { id, question, deadline, total: tally.total, leaders: leadersOf(tally) };
     };
     return {
       open: open.map(item),
-      closed: closed.map((poll) => ({ ...item(poll), closedAt: poll.closedAt })),
+      closed: closed.map((poll) => ({
+        ...item(poll),
+        closedAt: poll.closedAt,
+        archivesAt: poll.archivesAt,
+      })),
       archived: archived.map((poll) => ({ ...item(poll), closedAt: poll.closedAt })),
     };
   }
@@ -399,6 +411,11 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   };
 }
 
+/** Every option with the most votes; empty when nobody has voted. */
+function leadersOf(tally: VoteTally): PollOption[] {
+  return tally.options.filter((option) => option.isTop).map(({ id, label }) => ({ id, label }));
+}
+
 type Closed = Extract<PollSummary, { closedAt: Date }>;
 
 /** Open by nearest deadline; closed and archived by latest 마감 시각. Sorts are stable. */
@@ -436,7 +453,7 @@ function computeRanking(votes: OptionVotes[]): Ranking {
 
   if (tally.total === 0) return { options, summary: { kind: "empty", total: 0 } };
 
-  const leaders = options.filter((option) => option.isTop).map(({ id, label }) => ({ id, label }));
+  const leaders = leadersOf(tally);
   if (leaders.length > 1) {
     return { options, summary: { kind: "tied", total: tally.total, leaders } };
   }

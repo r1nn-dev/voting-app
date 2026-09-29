@@ -648,6 +648,34 @@ describe("listPollsForAdmin", () => {
     expect(byId.get(empty)).toMatchObject({ total: 0, leaders: [] });
   });
 
+  it("마감 묶음과 보관 묶음의 항목도 총 표 수와 1위를 담고, 마감 묶음은 보관될 시각을 알려준다", async () => {
+    // Looked at on day 32: closedOne closed on day 31 (still public), archivedOne
+    // closed after 1 hour (archived since 30 days + 1 hour).
+    const closedOne = await pollOn(at(25 * DAY), "마감", at(31 * DAY));
+    const archivedOne = await createOpenPoll("보관", ["a", "b"], at(HOUR));
+    await castVotes(closedOne, [0, 2]);
+    await castVotes(archivedOne, [1, 1]);
+
+    const { closed, archived } = await pollsAt(at(32 * DAY)).listPollsForAdmin();
+
+    expect(closed).toEqual([
+      expect.objectContaining({
+        id: closedOne,
+        total: 2,
+        leaders: [expect.objectContaining({ label: "b" })],
+        closedAt: at(31 * DAY),
+        archivesAt: at(61 * DAY),
+      }),
+    ]);
+    expect(archived).toEqual([
+      expect.objectContaining({
+        id: archivedOne,
+        total: 2,
+        leaders: [expect.objectContaining({ label: "a" }), expect.objectContaining({ label: "b" })],
+      }),
+    ]);
+  });
+
   it("마감 전에도 관리자 목록에는 득표 현황(총 표 수)이 있다", async () => {
     const id = await createOpenPoll("진행 중", ["a", "b"]);
     await castVotes(id, [2, 0]);
