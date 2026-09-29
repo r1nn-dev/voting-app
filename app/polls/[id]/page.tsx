@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { isAdmin } from "@/lib/admin-session";
 import { getSql } from "@/lib/db";
 import { formatKst, formatRemaining } from "@/lib/kst-time";
+import { POLL_LIMITS } from "@/lib/poll-limits";
 import { createPolls } from "@/lib/polls";
 import { readVoterId } from "@/lib/voter-session";
 import { ShareBar } from "../../share-bar";
@@ -21,7 +22,9 @@ export default async function PollPage({ params }: PageProps<"/polls/[id]">) {
     return (
       <section className="text-center">
         <h1 className="mb-2 text-2xl font-bold">공개 기간이 끝난 투표입니다</h1>
-        <p className="text-zinc-500">마감 후 30일이 지나 더 이상 공개되지 않습니다.</p>
+        <p className="text-zinc-500">
+          마감 후 {POLL_LIMITS.publicDays}일이 지나 더 이상 공개되지 않습니다.
+        </p>
         {admin && (
           <Link
             href={`/admin/polls/${poll.id}`}

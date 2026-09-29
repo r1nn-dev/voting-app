@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { resetDatabase, testSql } from "@/tests/db";
-import { createPolls, type VoterPoll } from "./polls";
+import { createPolls } from "./polls";
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -77,12 +77,12 @@ const bob = "00000000-0000-4000-8000-00000000000b";
 async function publicView(pollId: string, voterId: string | null) {
   const poll = await polls.getPollForVoter(pollId, voterId);
   if (!poll || poll.status === "archived") throw new Error(`공개 중인 투표가 아님: ${pollId}`);
-  return poll as Exclude<VoterPoll, { status: "archived" }>;
+  return poll;
 }
 
 async function optionIds(pollId: string) {
   const poll = await publicView(pollId, null);
-  return poll!.options.map((option) => option.id);
+  return poll.options.map((option) => option.id);
 }
 
 describe("castVote", () => {
@@ -92,8 +92,8 @@ describe("castVote", () => {
 
     expect(await polls.castVote(id, ramen, alice)).toEqual({ ok: true });
 
-    expect((await publicView(id, alice))?.myChoice).toBe(ramen);
-    expect((await publicView(id, bob))?.myChoice).toBeNull();
+    expect((await publicView(id, alice)).myChoice).toBe(ramen);
+    expect((await publicView(id, bob)).myChoice).toBeNull();
   });
 
   it("같은 투표자의 두 번째 표는 거부하고 첫 선택을 유지한다", async () => {
@@ -102,7 +102,7 @@ describe("castVote", () => {
     await polls.castVote(id, kimbap, alice);
 
     expect(await polls.castVote(id, ramen, alice)).toEqual({ ok: false, reason: "already_voted" });
-    expect((await publicView(id, alice))?.myChoice).toBe(kimbap);
+    expect((await publicView(id, alice)).myChoice).toBe(kimbap);
   });
 
   it("다른 투표의 선택지에는 표를 넣을 수 없다", async () => {
@@ -113,7 +113,7 @@ describe("castVote", () => {
       ok: false,
       reason: "invalid_option",
     });
-    expect((await publicView(id, alice))?.myChoice).toBeNull();
+    expect((await publicView(id, alice)).myChoice).toBeNull();
   });
 
   it("형식이 잘못된 선택지 ID도 잘못된 선택지로 거부한다", async () => {
@@ -528,15 +528,31 @@ describe("보관", () => {
     expect(admin?.ranking.summary.total).toBe(3);
   });
 
-  it("보관된 투표는 메인 목록에서 빠진다", async () => {
-    const id = await closedAtHour();
-    const kept = await createOpenPoll("진행 중", ["a", "b"], at(20 * DAY));
+  it("보관된 투표는 메인 목록에서 빠지고, 진행 중과 공개 중인 마감 투표는 남는다", async () => {
+    const archived = await closedAtHour();
+    const stillPublic = await createOpenPoll("마감됐지만 공개 중", ["a", "b"], at(20 * DAY));
+    // Created later so its deadline can lie beyond the moment we look at.
+    const created = await pollsAt(at(25 * DAY)).createPoll({
+      question: "진행 중",
+      options: ["a", "b"],
+      deadline: at(40 * DAY),
+    });
+    if (!created.ok) throw new Error("투표 생성 실패");
 
     const { open, closed } = await pollsAt(at(HOUR + 30 * DAY)).listPolls();
 
-    expect(open.map((poll) => poll.id)).toEqual([]);
-    expect(closed.map((poll) => poll.id)).toEqual([kept]);
-    expect(closed.map((poll) => poll.id)).not.toContain(id);
+    expect(open.map((poll) => poll.id)).toEqual([created.id]);
+    expect(closed.map((poll) => poll.id)).toEqual([stillPublic]);
+    expect([...open, ...closed].map((poll) => poll.id)).not.toContain(archived);
+  });
+
+  it("마감 예정 시각 전에 직접 마감한 투표는 직접 마감한 시각부터 30일 뒤에 보관된다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(20 * DAY));
+    await pollsAt(at(HOUR)).closePoll(id);
+
+    expect((await pollsAt(at(HOUR + 30 * DAY)).getPollForVoter(id, null))?.status).toBe(
+      "archived",
+    );
   });
 
   it("연장된 투표는 보관 시점도 뒤로 밀린다", async () => {

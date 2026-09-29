@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/admin-session";
 import { getSql } from "@/lib/db";
 import { parseKstInput } from "@/lib/kst-time";
+import { POLL_LIMITS } from "@/lib/poll-limits";
 import { createPolls, type CreatePollErrors, type ExtendDeadlineFailure } from "@/lib/polls";
 import { revalidatePollPages } from "../revalidate-polls";
 
@@ -59,7 +60,7 @@ const EXTEND_FAILURE_MESSAGES: Record<ExtendDeadlineFailure, string> = {
   not_found: "투표가 없거나 삭제되었습니다.",
   closed: "이미 마감된 투표는 연장할 수 없습니다.",
   not_later: "현재 마감 예정 시각보다 늦은 시각만 고를 수 있습니다. 일찍 끝내려면 마감하세요.",
-  out_of_range: "지금부터 30일 이내로만 연장할 수 있습니다.",
+  out_of_range: `지금부터 ${POLL_LIMITS.deadlineMaxDays}일 이내로만 연장할 수 있습니다.`,
 };
 
 // pollId is a form field rather than a bound argument (see castVoteAction).

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/admin-session";
 import { getSql } from "@/lib/db";
 import { formatKst, formatRemaining } from "@/lib/kst-time";
+import { POLL_LIMITS } from "@/lib/poll-limits";
 import { createPolls } from "@/lib/polls";
 import { StatusBadge } from "../../../status-badge";
 import { ConfirmActionButton } from "../../confirm-action-button";
@@ -48,8 +49,8 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
         <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
           <h2 className="mb-1 font-medium">마감 예정 시각 연장</h2>
           <p className="mb-3 text-sm text-zinc-500">
-            현재: {formatKst(poll.deadline)}. 늦추는 방향으로만, 지금부터 30일 이내로 연장할 수
-            있습니다.
+            현재: {formatKst(poll.deadline)}. 늦추는 방향으로만, 지금부터{" "}
+            {POLL_LIMITS.deadlineMaxDays}일 이내로 연장할 수 있습니다.
           </p>
           <ExtendDeadlineForm
             key={poll.deadline.toISOString()}
