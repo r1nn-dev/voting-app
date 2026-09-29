@@ -26,6 +26,7 @@ export default function HelpPage() {
               투표 목록
             </Link>
             의 <strong>진행 중</strong> 구역에서 투표를 고릅니다. 공유받은 링크로 바로 들어가도 됩니다.
+            목록에 나오지 않고 링크로만 들어오는 투표도 있습니다.
           </li>
           <li>선택지 중 하나를 고릅니다.</li>
           <li>

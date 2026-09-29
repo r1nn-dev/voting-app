@@ -574,6 +574,62 @@ describe("보관", () => {
   });
 });
 
+describe("링크 전용", () => {
+  async function unlisted(question: string, deadline = at(DAY)) {
+    const result = await polls.createPoll({ question, options: ["a", "b"], deadline, listed: false });
+    if (!result.ok) throw new Error("투표 생성 실패");
+    return result.id;
+  }
+
+  it("링크 전용 투표는 메인 목록의 어느 구역에도 나오지 않지만, 링크로는 투표할 수 있다", async () => {
+    const hidden = await unlisted("링크 전용");
+    const shown = await createOpenPoll("목록 공개");
+
+    expect((await polls.listPolls()).open.map((poll) => poll.id)).toEqual([shown]);
+    expect((await publicView(hidden, null)).status).toBe("open");
+    expect(await polls.castVote(hidden, (await optionIds(hidden))[0], alice)).toEqual({ ok: true });
+  });
+
+  it("마감돼도 메인 목록에 나오지 않는다", async () => {
+    await unlisted("링크 전용", at(HOUR));
+
+    expect((await pollsAt(at(2 * HOUR)).listPolls()).closed).toEqual([]);
+  });
+
+  it("관리 목록과 관리자 조회에는 공개 방식과 함께 나온다", async () => {
+    const hidden = await unlisted("링크 전용");
+    const shown = await createOpenPoll("목록 공개");
+
+    const { open } = await polls.listPollsForAdmin();
+
+    expect(open.map((poll) => [poll.id, poll.listed]).sort()).toEqual(
+      [[hidden, false], [shown, true]].sort(),
+    );
+    expect((await polls.getPollForAdmin(hidden))?.listed).toBe(false);
+  });
+
+  it("공개 방식을 기본으로 정하지 않으면 목록 공개다", async () => {
+    const id = await createOpenPoll();
+
+    expect((await polls.getPollForAdmin(id))?.listed).toBe(true);
+  });
+
+  it("setListed로 언제든 바꿀 수 있고, 바로 반영된다", async () => {
+    const id = await unlisted("링크 전용", at(HOUR));
+
+    expect(await polls.setListed(id, true)).toEqual({ ok: true });
+    expect((await polls.listPolls()).open.map((poll) => poll.id)).toEqual([id]);
+
+    const later = pollsAt(at(2 * HOUR));
+    expect(await later.setListed(id, false)).toEqual({ ok: true });
+    expect((await later.listPolls()).closed).toEqual([]);
+  });
+
+  it("없는 투표는 not_found", async () => {
+    expect(await polls.setListed("nope000000", false)).toEqual({ ok: false, reason: "not_found" });
+  });
+});
+
 describe("deletePoll", () => {
   it("표가 있는 투표를 지우면 어디서도 조회되지 않고, 다른 투표는 그대로다", async () => {
     const doomed = await createOpenPoll("지울 투표");

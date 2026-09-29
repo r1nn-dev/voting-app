@@ -19,9 +19,18 @@ type SamplePoll = {
   closedAgo?: number;
   /** Overrides the staggered creation time, for polls that must be older. */
   createdAgo?: number;
+  /** 링크 전용 when false. */
+  listed?: boolean;
 };
 
 const SAMPLE_POLLS: SamplePoll[] = [
+  {
+    question: "(링크 전용) 동아리 회식 날짜는 언제가 좋을까요?",
+    options: ["금요일 저녁", "토요일 점심", "토요일 저녁"],
+    votes: [2, 1, 3],
+    deadlineIn: 4 * DAY,
+    listed: false,
+  },
   {
     question: "오늘 점심 뭐 먹을까요?",
     options: ["김밥", "라면", "돈가스", "제육볶음"],
@@ -94,8 +103,8 @@ for (const [index, poll] of [...SAMPLE_POLLS].reverse().entries()) {
   const deadline = new Date(now + poll.deadlineIn);
   const closedAt = poll.closedAgo === undefined ? null : new Date(now - poll.closedAgo);
   await sql`
-    INSERT INTO polls (id, question, created_at, deadline, closed_at)
-    VALUES (${id}, ${poll.question}, ${createdAt}, ${deadline}, ${closedAt})
+    INSERT INTO polls (id, question, created_at, deadline, closed_at, listed)
+    VALUES (${id}, ${poll.question}, ${createdAt}, ${deadline}, ${closedAt}, ${poll.listed ?? true})
   `;
   const optionRows = (await sql`
     INSERT INTO options (poll_id, label, position)

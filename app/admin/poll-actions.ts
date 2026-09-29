@@ -20,6 +20,7 @@ export async function createPollAction(
     question: String(formData.get("question") ?? ""),
     options: formData.getAll("option").map(String),
     deadline: parseKstInput(formData.get("deadline")),
+    listed: formData.get("listed") !== "false",
   });
   if (!result.ok) return { errors: result.errors };
 
@@ -32,6 +33,16 @@ export async function closePollAction(pollId: string): Promise<void> {
 
   // A poll deleted in another tab is already gone; nothing to report.
   await createPolls(getSql()).closePoll(pollId);
+
+  revalidatePollPages(pollId);
+}
+
+/** 목록 공개 ↔ 링크 전용. pollId and the new value are form fields (see castVoteAction). */
+export async function setListedAction(formData: FormData): Promise<void> {
+  await requireAdmin();
+
+  const pollId = String(formData.get("pollId") ?? "");
+  await createPolls(getSql()).setListed(pollId, formData.get("listed") === "true");
 
   revalidatePollPages(pollId);
 }

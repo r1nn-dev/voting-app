@@ -33,6 +33,7 @@ export function NewPollForm({ initialDeadline }: { initialDeadline: string }) {
   const [question, setQuestion] = useState("");
   const [options, setOptions] = useState(() => [newOption(), newOption()]);
   const [deadline, setDeadline] = useState(initialDeadline);
+  const [listed, setListed] = useState("true");
   const errors = state.errors;
 
   return (
@@ -85,6 +86,38 @@ export function NewPollForm({ initialDeadline }: { initialDeadline: string }) {
         </p>
         {errors?.deadline && <p className={fieldError}>{errors.deadline}</p>}
       </div>
+
+      <fieldset className="flex flex-col gap-2">
+        <legend className={`${label} mb-2`}>공개 방식</legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {[
+            { value: "true", title: "목록 공개", body: "메인 목록에 나오고 누구나 들어올 수 있습니다." },
+            {
+              value: "false",
+              title: "링크 전용",
+              body: "목록에 나오지 않고, 링크를 가진 사람만 들어옵니다.",
+            },
+          ].map((choice) => (
+            <label
+              key={choice.value}
+              className="flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 px-4 py-3 transition has-checked:border-indigo-500 has-checked:bg-indigo-50/60 dark:border-zinc-700 dark:has-checked:border-indigo-400 dark:has-checked:bg-indigo-950/40"
+            >
+              <input
+                type="radio"
+                name="listed"
+                value={choice.value}
+                checked={listed === choice.value}
+                onChange={() => setListed(choice.value)}
+                className="mt-1 accent-indigo-600"
+              />
+              <span>
+                <span className="block text-sm font-semibold">{choice.title}</span>
+                <span className={`${hint} block`}>{choice.body}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
 
       <fieldset className="flex flex-col gap-2.5">
         <legend className={`${label} mb-2`}>

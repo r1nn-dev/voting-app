@@ -52,7 +52,7 @@ DATABASE_URL="<main 브랜치 연결 문자열>" node scripts/migrate.mts
 ```bash
 npm install
 npm run db:migrate
-npm run db:seed    # 빈 DB에 예시 투표 6개 (진행 중 3, 마감 2, 보관 1)
+npm run db:seed    # 빈 DB에 예시 투표 7개 (진행 중 4, 마감 2, 보관 1)
 npm run dev        # http://localhost:3000, 헤더의 "관리자" → /admin
 ```
 

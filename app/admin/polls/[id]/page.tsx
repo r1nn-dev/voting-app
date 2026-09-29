@@ -7,11 +7,16 @@ import { POLL_LIMITS } from "@/lib/poll-limits";
 import { createPolls } from "@/lib/polls";
 import { pollUrl, qrSvg } from "@/lib/share";
 import { ArrowLeftIcon, ClockIcon } from "../../../icons";
+import { UnlistedBadge } from "../../../listed-badge";
 import { SharePanel } from "../../../share-panel";
 import { StatusBadge } from "../../../status-badge";
 import { backLink, buttonSecondary, card, cardPadding, hint } from "../../../ui";
 import { ConfirmActionButton } from "../../confirm-action-button";
-import { closePollAction, deletePollAndReturnToListAction } from "../../poll-actions";
+import {
+  closePollAction,
+  deletePollAndReturnToListAction,
+  setListedAction,
+} from "../../poll-actions";
 import { ExtendDeadlineForm } from "./extend-deadline-form";
 import { RankChart } from "./rank-chart";
 
@@ -33,7 +38,10 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
       <section className={`${card} ${cardPadding}`}>
         <div className="flex items-start justify-between gap-4">
           <h1 className="text-2xl font-bold leading-snug tracking-tight">{poll.question}</h1>
-          <StatusBadge status={poll.status} />
+          <span className="flex shrink-0 items-center gap-1.5">
+            <UnlistedBadge listed={poll.listed} />
+            <StatusBadge status={poll.status} />
+          </span>
         </div>
         <p className="mt-2 flex items-center gap-1.5 text-sm text-zinc-500 dark:text-zinc-400">
           <ClockIcon className="size-4" />
@@ -45,6 +53,13 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
           <Link href={`/polls/${poll.id}`} className={buttonSecondary}>
             공개 페이지 보기
           </Link>
+          <form action={setListedAction}>
+            <input type="hidden" name="pollId" value={poll.id} />
+            <input type="hidden" name="listed" value={poll.listed ? "false" : "true"} />
+            <button className={buttonSecondary}>
+              {poll.listed ? "링크 전용으로 바꾸기" : "목록에 공개하기"}
+            </button>
+          </form>
         </div>
         {poll.status !== "archived" && (
           <div className="mt-3">

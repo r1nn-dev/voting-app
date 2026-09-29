@@ -6,7 +6,7 @@ import { POLL_LIMITS } from "./poll-limits";
 export type PollStatus = "open" | "closed" | "archived";
 
 /** A poll's state as every list sees it; only closed and archived polls have a 마감 시각. */
-type PollSummary = { id: string; question: string; deadline: Date } & (
+type PollSummary = { id: string; question: string; deadline: Date; listed: boolean } & (
   | { status: "open" }
   | { status: "closed" | "archived"; closedAt: Date; archivesAt: Date }
 );
@@ -33,6 +33,8 @@ export type AdminListItem = {
   id: string;
   question: string;
   deadline: Date;
+  /** 목록 공개 (true) or 링크 전용 (false). */
+  listed: boolean;
   total: number;
   /** Options with the most votes (several when tied); empty when nobody has voted. */
   leaders: PollOption[];
@@ -81,7 +83,13 @@ export type PublicPollList = {
 };
 
 /** `deadline` is an absolute instant (null when the form sent nothing usable). */
-export type CreatePollInput = { question: string; options: string[]; deadline: Date | null };
+export type CreatePollInput = {
+  question: string;
+  options: string[];
+  deadline: Date | null;
+  /** 목록 공개 unless false (링크 전용). */
+  listed?: boolean;
+};
 
 export type CreatePollErrors = {
   question?: string;
@@ -121,6 +129,7 @@ export type AdminPoll = {
   id: string;
   question: string;
   status: PollStatus;
+  listed: boolean;
   deadline: Date;
   /** 마감 시각; null while open. */
   closedAt: Date | null;
@@ -178,20 +187,21 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   async function listAll(): Promise<PollSummary[]> {
     const at = readClock();
     const rows = (await sql`
-      SELECT p.id, p.question, ${pollState(at)}
+      SELECT p.id, p.question, p.listed, ${pollState(at)}
       FROM polls p
       ORDER BY p.created_at DESC, p.id DESC
-    `) as ({ id: string; question: string } & PollStateRow)[];
+    `) as ({ id: string; question: string; listed: boolean } & PollStateRow)[];
     // closed_at and archives_at are set exactly when the poll is not open (pollState).
-    return rows.map(({ id, question, status, deadline, closed_at, archives_at }) =>
+    return rows.map(({ id, question, listed, status, deadline, closed_at, archives_at }) =>
       status === "open"
-        ? { id, question, deadline, status }
-        : { id, question, deadline, status, closedAt: closed_at!, archivesAt: archives_at! },
+        ? { id, question, deadline, listed, status }
+        : { id, question, deadline, listed, status, closedAt: closed_at!, archivesAt: archives_at! },
     );
   }
 
+  /** 링크 전용 polls never appear here, whatever their state. */
   async function listPolls(): Promise<PublicPollList> {
-    const { open, closed } = groupByStatus(await listAll());
+    const { open, closed } = groupByStatus((await listAll()).filter((poll) => poll.listed));
     return {
       open: open.map(({ id, question, deadline }) => ({ id, question, deadline })),
       closed: closed.map(({ id, question, closedAt }) => ({ id, question, closedAt })),
@@ -210,8 +220,8 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     // deadline range is checked here, against the same "now" as every judgement.
     const inserted = await sql`
       WITH poll AS (
-        INSERT INTO polls (id, question, deadline)
-        SELECT ${id}, ${question}, ${input.deadline.toISOString()}::timestamptz
+        INSERT INTO polls (id, question, deadline, listed)
+        SELECT ${id}, ${question}, ${input.deadline.toISOString()}::timestamptz, ${input.listed ?? true}
         WHERE ${input.deadline.toISOString()}::timestamptz
           BETWEEN ${at} + ${`${POLL_LIMITS.deadlineMinMinutes} minutes`}::interval
               AND ${at} + ${`${POLL_LIMITS.deadlineMaxDays} days`}::interval
@@ -266,9 +276,9 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   async function listPollsForAdmin(): Promise<AdminPollList> {
     const { open, closed, archived } = groupByStatus(await listAll());
     const votesByPoll = await countVotes(null);
-    const item = ({ id, question, deadline }: PollSummary): AdminListItem => {
+    const item = ({ id, question, deadline, listed }: PollSummary): AdminListItem => {
       const tally = computeTally(votesByPoll.get(id) ?? []);
-      return { id, question, deadline, total: tally.total, leaders: leadersOf(tally) };
+      return { id, question, deadline, listed, total: tally.total, leaders: leadersOf(tally) };
     };
     return {
       open: open.map(item),
@@ -318,16 +328,17 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   async function getPollForAdmin(pollId: string): Promise<AdminPoll | null> {
     const at = readClock();
     const [poll] = (await sql`
-      SELECT p.id, p.question, ${pollState(at)}
+      SELECT p.id, p.question, p.listed, ${pollState(at)}
       FROM polls p
       WHERE p.id = ${pollId}
-    `) as ({ id: string; question: string } & PollStateRow)[];
+    `) as ({ id: string; question: string; listed: boolean } & PollStateRow)[];
     if (!poll) return null;
     const votes = (await countVotes(pollId)).get(pollId) ?? [];
     return {
       id: poll.id,
       question: poll.question,
       status: poll.status,
+      listed: poll.listed,
       deadline: poll.deadline,
       closedAt: poll.closed_at,
       ranking: computeRanking(votes),
@@ -362,6 +373,15 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     if (!poll) return { ok: false, reason: "not_found" };
     if (poll.is_closed) return { ok: false, reason: "closed" };
     return { ok: false, reason: poll.is_later ? "out_of_range" : "not_later" };
+  }
+
+  /** 목록 공개 ↔ 링크 전용, in any state: it changes exposure, not the poll's content. */
+  async function setListed(
+    pollId: string,
+    listed: boolean,
+  ): Promise<{ ok: true } | { ok: false; reason: "not_found" }> {
+    const [updated] = await sql`UPDATE polls SET listed = ${listed} WHERE id = ${pollId} RETURNING 1`;
+    return updated ? { ok: true } : { ok: false, reason: "not_found" };
   }
 
   /** Hard delete; options and votes cascade. Deleting a missing poll succeeds. */
@@ -403,6 +423,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     listPollsForAdmin,
     getPollForAdmin,
     extendDeadline,
+    setListed,
     createPoll,
     getPollForVoter,
     castVote,
