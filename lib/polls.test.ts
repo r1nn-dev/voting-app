@@ -90,45 +90,68 @@ describe("castVote", () => {
     const id = await createOpenPoll();
     const [, ramen] = await optionIds(id);
 
-    expect(await polls.castVote(id, ramen, alice)).toEqual({ ok: true });
+    expect(await polls.castVote(id, [ramen], alice)).toEqual({ ok: true });
 
-    expect((await publicView(id, alice)).myChoice).toBe(ramen);
-    expect((await publicView(id, bob)).myChoice).toBeNull();
+    expect((await publicView(id, alice)).myChoices).toEqual([ramen]);
+    expect((await publicView(id, bob)).myChoices).toEqual([]);
   });
 
   it("같은 투표자의 두 번째 표는 거부하고 첫 선택을 유지한다", async () => {
     const id = await createOpenPoll();
     const [kimbap, ramen] = await optionIds(id);
-    await polls.castVote(id, kimbap, alice);
+    await polls.castVote(id, [kimbap], alice);
 
-    expect(await polls.castVote(id, ramen, alice)).toEqual({ ok: false, reason: "already_voted" });
-    expect((await publicView(id, alice)).myChoice).toBe(kimbap);
+    expect(await polls.castVote(id, [ramen], alice)).toEqual({ ok: false, reason: "already_voted" });
+    expect((await publicView(id, alice)).myChoices).toEqual([kimbap]);
   });
 
   it("다른 투표의 선택지에는 표를 넣을 수 없다", async () => {
     const id = await createOpenPoll();
     const [otherOption] = await optionIds(await createOpenPoll("다른 투표"));
 
-    expect(await polls.castVote(id, otherOption, alice)).toEqual({
+    expect(await polls.castVote(id, [otherOption], alice)).toEqual({
       ok: false,
-      reason: "invalid_option",
+      reason: "invalid_choice",
     });
-    expect((await publicView(id, alice)).myChoice).toBeNull();
+    expect((await publicView(id, alice)).myChoices).toEqual([]);
   });
 
   it("형식이 잘못된 선택지 ID도 잘못된 선택지로 거부한다", async () => {
     const id = await createOpenPoll();
 
-    expect(await polls.castVote(id, "not-a-number", alice)).toEqual({
+    expect(await polls.castVote(id, ["not-a-number"], alice)).toEqual({
       ok: false,
-      reason: "invalid_option",
+      reason: "invalid_choice",
     });
+  });
+
+  it("단일 선택은 선택지가 정확히 하나여야 한다", async () => {
+    const id = await createOpenPoll();
+    const [kimbap, ramen] = await optionIds(id);
+
+    expect(await polls.castVote(id, [], alice)).toEqual({ ok: false, reason: "invalid_choice" });
+    expect(await polls.castVote(id, [kimbap, ramen], alice)).toEqual({
+      ok: false,
+      reason: "invalid_choice",
+    });
+    // Nothing was stored, so the browser can still vote.
+    expect(await polls.castVote(id, [ramen], alice)).toEqual({ ok: true });
+  });
+
+  it("다른 투표의 선택지로 실패한 표는 남지 않는다", async () => {
+    const id = await createOpenPoll();
+    const [otherOption] = await optionIds(await createOpenPoll("다른 투표"));
+    const [kimbap] = await optionIds(id);
+    await polls.castVote(id, [otherOption], alice);
+
+    expect(await polls.castVote(id, [kimbap], alice)).toEqual({ ok: true });
+    expect((await publicView(id, alice)).myChoices).toEqual([kimbap]);
   });
 
   it("없는 투표에는 표를 넣을 수 없다", async () => {
     const [option] = await optionIds(await createOpenPoll());
 
-    expect(await polls.castVote("nope000000", option, alice)).toEqual({
+    expect(await polls.castVote("nope000000", [option], alice)).toEqual({
       ok: false,
       reason: "not_found",
     });
@@ -138,15 +161,15 @@ describe("castVote", () => {
     const first = await createOpenPoll("첫 번째");
     const second = await createOpenPoll("두 번째");
 
-    expect(await polls.castVote(first, (await optionIds(first))[0], alice)).toEqual({ ok: true });
-    expect(await polls.castVote(second, (await optionIds(second))[1], alice)).toEqual({ ok: true });
+    expect(await polls.castVote(first, [(await optionIds(first))[0]], alice)).toEqual({ ok: true });
+    expect(await polls.castVote(second, [(await optionIds(second))[1]], alice)).toEqual({ ok: true });
   });
 
   it("진행 중인 투표의 투표자 시점에는 어떤 수치도 없다", async () => {
     const id = await createOpenPoll();
     const [kimbap] = await optionIds(id);
-    await polls.castVote(id, kimbap, alice);
-    await polls.castVote(id, kimbap, bob);
+    await polls.castVote(id, [kimbap], alice);
+    await polls.castVote(id, [kimbap], bob);
 
     const poll = await publicView(id, alice);
 
@@ -166,7 +189,7 @@ async function castVotes(pollId: string, votesPerOption: number[], client = poll
   const ids = await optionIds(pollId);
   let voter = 0;
   for (const [index, count] of votesPerOption.entries()) {
-    for (let i = 0; i < count; i++) await client.castVote(pollId, ids[index], voters[voter++]);
+    for (let i = 0; i < count; i++) await client.castVote(pollId, [ids[index]], voters[voter++]);
   }
 }
 
@@ -174,15 +197,15 @@ describe("closePoll", () => {
   it("마감하면 목록에 마감으로 보이고, 결과가 공개되고, 이후 표는 거부된다", async () => {
     const id = await createOpenPoll();
     const [kimbap] = await optionIds(id);
-    await polls.castVote(id, kimbap, alice);
+    await polls.castVote(id, [kimbap], alice);
 
     expect(await polls.closePoll(id)).toEqual({ ok: true });
 
     expect((await polls.listPolls()).closed.map((poll) => poll.id)).toEqual([id]);
     const poll = await publicView(id, alice);
     expect(poll?.status).toBe("closed");
-    expect(poll?.myChoice).toBe(kimbap);
-    expect(await polls.castVote(id, kimbap, bob)).toEqual({ ok: false, reason: "closed" });
+    expect(poll?.myChoices).toEqual([kimbap]);
+    expect(await polls.castVote(id, [kimbap], bob)).toEqual({ ok: false, reason: "closed" });
   });
 
   /** castVotes gives voters[0] the first option that has any votes. */
@@ -279,7 +302,7 @@ describe("자동 마감", () => {
     const justBefore = pollsAt(at(HOUR - 1000));
 
     expect((await justBefore.getPollForVoter(id, null))?.status).toBe("open");
-    expect(await justBefore.castVote(id, a, alice)).toEqual({ ok: true });
+    expect(await justBefore.castVote(id, [a], alice)).toEqual({ ok: true });
   });
 
   it("마감 예정 시각이 지나면 마감되어 결과가 공개되고, 표를 거부하며, 마감 시각은 마감 예정 시각이다", async () => {
@@ -292,7 +315,7 @@ describe("자동 마감", () => {
     expect(poll?.status).toBe("closed");
     expect(poll?.status === "closed" && poll.closedAt).toEqual(at(HOUR));
     expect(poll?.status === "closed" && poll.results.total).toBe(3);
-    expect(await later.castVote(id, (await optionIds(id))[0], bob)).toEqual({
+    expect(await later.castVote(id, [(await optionIds(id))[0]], bob)).toEqual({
       ok: false,
       reason: "closed",
     });
@@ -337,7 +360,7 @@ describe("extendDeadline", () => {
     const later = pollsAt(at(2 * HOUR));
 
     expect((await later.getPollForVoter(id, null))?.status).toBe("open");
-    expect(await later.castVote(id, (await optionIds(id))[0], alice)).toEqual({ ok: true });
+    expect(await later.castVote(id, [(await optionIds(id))[0]], alice)).toEqual({ ok: true });
   });
 
   it("현재 마감 예정 시각보다 늦지 않으면 not_later로 거부하고 바꾸지 않는다", async () => {
@@ -587,7 +610,7 @@ describe("링크 전용", () => {
 
     expect((await polls.listPolls()).open.map((poll) => poll.id)).toEqual([shown]);
     expect((await publicView(hidden, null)).status).toBe("open");
-    expect(await polls.castVote(hidden, (await optionIds(hidden))[0], alice)).toEqual({ ok: true });
+    expect(await polls.castVote(hidden, [(await optionIds(hidden))[0]], alice)).toEqual({ ok: true });
   });
 
   it("마감돼도 메인 목록에 나오지 않는다", async () => {
@@ -709,8 +732,8 @@ describe("예약 공개", () => {
     const id = await scheduled(at(HOUR), at(DAY));
     const [a] = await optionIds(id);
 
-    expect(await polls.castVote(id, a, alice)).toEqual({ ok: false, reason: "not_started" });
-    expect(await pollsAt(at(HOUR)).castVote(id, a, alice)).toEqual({ ok: true });
+    expect(await polls.castVote(id, [a], alice)).toEqual({ ok: false, reason: "not_started" });
+    expect(await pollsAt(at(HOUR)).castVote(id, [a], alice)).toEqual({ ok: true });
   });
 
   it("시작 전인 투표는 마감할 수 없다", async () => {
@@ -962,7 +985,7 @@ describe("createPoll", () => {
       id,
       question: "점심 뭐 먹지?",
       status: "open",
-      myChoice: null,
+      myChoices: [],
     });
     expect(poll?.options.map((option) => option.label)).toEqual(["김밥", "라면", "돈가스"]);
   });

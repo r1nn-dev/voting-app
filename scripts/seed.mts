@@ -130,8 +130,12 @@ for (const [index, poll] of [...SAMPLE_POLLS].reverse().entries()) {
   for (const [position, voteCount] of poll.votes.entries()) {
     for (let i = 0; i < voteCount; i++) {
       await sql`
-        INSERT INTO votes (poll_id, option_id, voter_id)
-        VALUES (${id}, ${optionIdAt.get(position)}::bigint, ${randomUUID()}::uuid)
+        WITH ballot AS (
+          INSERT INTO ballots (poll_id, voter_id) VALUES (${id}, ${randomUUID()}::uuid)
+          RETURNING id
+        )
+        INSERT INTO ballot_choices (ballot_id, poll_id, option_id)
+        SELECT id, ${id}, ${optionIdAt.get(position)}::bigint FROM ballot
       `;
     }
   }

@@ -49,7 +49,7 @@ export default async function PollPage({ params }: PageProps<"/polls/[id]">) {
     );
   }
 
-  const myChoice = poll.options.find((option) => option.id === poll.myChoice);
+  const myChoice = poll.options.find((option) => poll.myChoices.includes(option.id));
   const url = await pollUrl(poll.id);
   const qr = await qrSvg(url);
 

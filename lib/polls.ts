@@ -74,7 +74,8 @@ type VoterPollBase = {
   question: string;
   options: PollOption[];
   /** Option id this voter chose, or null if they have not voted. */
-  myChoice: string | null;
+  /** Option IDs of this browser's ballot, in option order; empty before voting. */
+  myChoices: string[];
 };
 
 /**
@@ -178,7 +179,7 @@ export type CastVoteFailure =
   | "not_started"
   | "closed"
   | "already_voted"
-  | "invalid_option";
+  | "invalid_choice";
 
 export type CastVoteResult = { ok: true } | { ok: false; reason: CastVoteFailure };
 
@@ -317,14 +318,21 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
         p.id,
         p.question,
         ${pollState(at)},
-        (SELECT v.option_id::text FROM votes v WHERE v.poll_id = p.id AND v.voter_id = ${voterId}::uuid) AS my_choice
+        ARRAY(
+          SELECT c.option_id::text
+          FROM ballots b
+          JOIN ballot_choices c ON c.ballot_id = b.id
+          JOIN options o ON o.id = c.option_id
+          WHERE b.poll_id = p.id AND b.voter_id = ${voterId}::uuid AND NOT b.by_code
+          ORDER BY o.position
+        ) AS my_choices
       FROM polls p
       WHERE p.id = ${pollId}
-    `) as ({ id: string; question: string; my_choice: string | null } & PollStateRow)[];
+    `) as ({ id: string; question: string; my_choices: string[] } & PollStateRow)[];
     if (!poll) return null;
     if (poll.status === "archived") return { id: poll.id, status: "archived" };
 
-    const base = { id: poll.id, question: poll.question, myChoice: poll.my_choice };
+    const base = { id: poll.id, question: poll.question, myChoices: poll.my_choices };
 
     if (poll.status === "scheduled" || poll.status === "open") {
       const options = (await sql`
@@ -337,7 +345,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
 
     const tally = computeTally((await countVotes(pollId)).get(pollId) ?? []);
     const options = tally.options.map(({ id, label }) => ({ id, label }));
-    const results = computeShare(tally, poll.my_choice);
+    const results = computeShare(tally, poll.my_choices);
     return { ...base, options, status: "closed", closedAt: poll.closed_at!, results };
   }
 
@@ -372,9 +380,9 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   /** Per-option vote counts in creation order, grouped by poll; null counts every poll. */
   async function countVotes(pollId: string | null): Promise<Map<string, OptionVotes[]>> {
     const rows = (await sql`
-      SELECT o.poll_id, o.id::text AS id, o.label, count(v.voter_id)::int AS votes
+      SELECT o.poll_id, o.id::text AS id, o.label, count(c.ballot_id)::int AS votes
       FROM options o
-      LEFT JOIN votes v ON v.poll_id = o.poll_id AND v.option_id = o.id
+      LEFT JOIN ballot_choices c ON c.poll_id = o.poll_id AND c.option_id = o.id
       WHERE ${pollId}::text IS NULL OR o.poll_id = ${pollId}
       GROUP BY o.id
       ORDER BY o.poll_id, o.position
@@ -550,32 +558,47 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     return updated ? { ok: true } : { ok: false, reason: "not_found" };
   }
 
-  /** Hard delete; options and votes cascade. Deleting a missing poll succeeds. */
+  /** Hard delete; options and ballots cascade. Deleting a missing poll succeeds. */
   async function deletePoll(pollId: string): Promise<{ ok: true }> {
     await sql`DELETE FROM polls WHERE id = ${pollId}`;
     return { ok: true };
   }
 
-  // The database enforces every rule (ADR-0005): the WHERE clause rejects
-  // closed polls atomically, the PK rejects a second vote, and the composite
-  // FK rejects options from another poll.
-  async function castVote(pollId: string, optionId: string, voterId: string): Promise<CastVoteResult> {
-    if (!/^\d{1,18}$/.test(optionId)) return { ok: false, reason: "invalid_option" };
+  // The database enforces every rule (ADR-0005): one statement inserts the
+  // ballot and its choices, so they succeed or fail together. The WHERE clause
+  // rejects polls not taking votes, the partial unique index rejects a second
+  // ballot from the same browser, and the composite FK rejects options from
+  // another poll.
+  async function castVote(
+    pollId: string,
+    optionIds: string[],
+    voterId: string,
+  ): Promise<CastVoteResult> {
+    // 단일 선택: exactly one option.
+    if (optionIds.length !== 1 || !optionIds.every((id) => /^\d{1,18}$/.test(id))) {
+      return { ok: false, reason: "invalid_choice" };
+    }
 
     const at = readClock();
     let inserted: unknown[];
     try {
       inserted = await sql`
-        INSERT INTO votes (poll_id, option_id, voter_id)
-        SELECT p.id, ${optionId}::bigint, ${voterId}::uuid
-        FROM polls p
-        WHERE p.id = ${pollId} AND ${acceptsVotes(at)}
+        WITH ballot AS (
+          INSERT INTO ballots (poll_id, voter_id)
+          SELECT p.id, ${voterId}::uuid
+          FROM polls p
+          WHERE p.id = ${pollId} AND ${acceptsVotes(at)}
+          RETURNING id, poll_id
+        )
+        INSERT INTO ballot_choices (ballot_id, poll_id, option_id)
+        SELECT b.id, b.poll_id, c.option_id
+        FROM ballot b CROSS JOIN unnest(${optionIds}::bigint[]) AS c (option_id)
         RETURNING 1
       `;
     } catch (error) {
       const code = (error as { code?: string }).code;
       if (code === UNIQUE_VIOLATION) return { ok: false, reason: "already_voted" };
-      if (code === FOREIGN_KEY_VIOLATION) return { ok: false, reason: "invalid_option" };
+      if (code === FOREIGN_KEY_VIOLATION) return { ok: false, reason: "invalid_choice" };
       throw error;
     }
     if (inserted.length > 0) return { ok: true };
@@ -684,11 +707,11 @@ function computeRanking(votes: OptionVotes[]): Ranking {
 }
 
 /** Sorts by votes, largest first; the sort is stable, so ties keep creation order. */
-function computeShare(tally: VoteTally, myChoice: string | null): ShareResults {
+function computeShare(tally: VoteTally, myChoices: string[]): ShareResults {
   return {
     total: tally.total,
     options: tally.options
-      .map((option, position) => ({ ...option, position, isMine: option.id === myChoice }))
+      .map((option, position) => ({ ...option, position, isMine: myChoices.includes(option.id) }))
       .toSorted((a, b) => b.votes - a.votes),
   };
 }

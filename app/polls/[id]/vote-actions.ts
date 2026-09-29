@@ -12,7 +12,7 @@ const FAILURE_MESSAGES: Record<CastVoteFailure, string> = {
   not_started: "아직 시작하지 않은 투표입니다. 표가 반영되지 않았습니다.",
   closed: "이미 마감된 투표입니다. 표가 반영되지 않았습니다.",
   already_voted: "이미 이 투표에 표를 던졌습니다.",
-  invalid_option: "올바른 선택지를 골라 주세요.",
+  invalid_choice: "올바른 선택지를 골라 주세요.",
 };
 
 // The poll id travels as a form field, not a bound argument: an action bound
@@ -26,7 +26,7 @@ export async function castVoteAction(_prev: VoteState, formData: FormData): Prom
 
   const result = await createPolls(getSql()).castVote(
     pollId,
-    optionId,
+    [optionId],
     await getOrIssueVoterId(),
   );
   // On failure, keep the page as is: re-rendering it (e.g. as closed or 404)
