@@ -270,6 +270,9 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     `;
     if (extended) return { ok: true };
 
+    // Only explains the refusal; the UPDATE above already decided atomically.
+    // In production this reads now() again, so a poll that closed in between
+    // is reported as closed, which is still a true reason.
     const [poll] = (await sql`
       SELECT ${isClosed(at)} AS is_closed, ${deadline}::timestamptz > p.deadline AS is_later
       FROM polls p

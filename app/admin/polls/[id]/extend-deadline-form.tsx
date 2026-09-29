@@ -23,7 +23,17 @@ export function ExtendDeadlineForm({ pollId, deadline }: { pollId: string; deadl
   const chosen = parseKstInput(value);
 
   return (
-    <form action={formAction} className="flex flex-col gap-3">
+    <form
+      action={formAction}
+      // Enter in the date input submits implicitly; route it through the confirm step.
+      onSubmit={(event) => {
+        if (!confirming) {
+          event.preventDefault();
+          if (chosen) setConfirming(true);
+        }
+      }}
+      className="flex flex-col gap-3"
+    >
       <input type="hidden" name="pollId" value={pollId} />
       <div className="flex flex-wrap items-center gap-2">
         <label htmlFor="deadline" className="sr-only">

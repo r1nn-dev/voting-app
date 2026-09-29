@@ -350,6 +350,13 @@ describe("extendDeadline", () => {
     expect((await later.getPollForVoter(id, null))?.status).toBe("closed");
   });
 
+  it("마감된 투표에 더 이른 시각을 주면 not_later가 아니라 closed로 거부한다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(DAY));
+    await polls.closePoll(id);
+
+    expect(await polls.extendDeadline(id, at(HOUR))).toEqual({ ok: false, reason: "closed" });
+  });
+
   it("없는 투표는 not_found", async () => {
     expect(await polls.extendDeadline("nope000000", at(DAY))).toEqual({
       ok: false,
@@ -378,6 +385,16 @@ describe("getPollForAdmin", () => {
     expect(await pollsAt(at(2 * HOUR)).getPollForAdmin(id)).toMatchObject({
       status: "closed",
       deadline: at(DAY),
+      closedAt: at(HOUR),
+    });
+  });
+
+  it("마감 예정 시각이 지나 마감된 투표는 마감 시각이 마감 예정 시각이다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(HOUR));
+
+    expect(await pollsAt(at(2 * HOUR)).getPollForAdmin(id)).toMatchObject({
+      status: "closed",
+      deadline: at(HOUR),
       closedAt: at(HOUR),
     });
   });
