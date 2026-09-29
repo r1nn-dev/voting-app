@@ -1,6 +1,6 @@
 # 07: 운영 배포 (Vercel + Neon main)
 
-**What to build:** 앱이 Vercel 운영 URL에서 Neon `main` 브랜치를 사용해 동작한다. 운영자와 투표자가 실제 URL에서 만들기 → 투표 → 마감 → 결과 → 삭제 흐름을 끝까지 쓸 수 있다. Vercel과 Neon 콘솔에서 사람이 직접 해야 하는 단계가 중심이다. 코드 쪽에서 필요한 조정이 생기면 이 티켓에서 함께 처리한다. 스펙: `.scratch/voting-app-mvp/spec.md`.
+**What to build:** 앱이 Vercel 운영 URL에서 Neon `main` 브랜치를 사용해 동작한다. 관리자와 투표자가 실제 URL에서 만들기 → 투표 → 마감 → 결과 → 삭제 흐름을 끝까지 쓸 수 있다. Vercel과 Neon 콘솔에서 사람이 직접 해야 하는 단계가 중심이다. 코드 쪽에서 필요한 조정이 생기면 이 티켓에서 함께 처리한다. 스펙: `.scratch/voting-app-mvp/spec.md`.
 
 **Blocked by:** 05, 06
 

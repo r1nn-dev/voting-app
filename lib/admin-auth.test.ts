@@ -34,7 +34,7 @@ describe("verifyAdminPassword", () => {
   });
 });
 
-describe("운영자 세션", () => {
+describe("관리자 세션", () => {
   it("새로 발급한 세션은 검증을 통과한다", async () => {
     const a = auth();
     expect(await a.verifyAdminSession(await a.createAdminSession())).toBe(true);

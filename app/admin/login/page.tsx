@@ -7,7 +7,7 @@ export default async function AdminLoginPage() {
 
   return (
     <section className="mx-auto max-w-sm">
-      <h1 className="mb-6 text-2xl font-bold">운영자 로그인</h1>
+      <h1 className="mb-6 text-2xl font-bold">관리자 로그인</h1>
       <LoginForm />
     </section>
   );

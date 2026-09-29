@@ -1,6 +1,6 @@
 # 투표 앱
 
-운영자가 질문과 선택지로 투표를 만들고, 익명 투표자가 선택지 하나에 표를 던지는 웹앱입니다. 결과는 운영자가 투표를 마감한 뒤에만 공개됩니다. 용어는 [CONTEXT.md](CONTEXT.md), 주요 결정은 [docs/adr/](docs/adr/)에 있습니다.
+관리자가 질문과 선택지로 투표를 만들고, 익명 투표자가 선택지 하나에 표를 던지는 웹앱입니다. 결과는 관리자가 투표를 마감한 뒤에만 공개됩니다. 용어는 [CONTEXT.md](CONTEXT.md), 주요 결정은 [docs/adr/](docs/adr/)에 있습니다.
 
 기술 스택은 Next.js 16 (App Router), Neon Postgres (`@neondatabase/serverless`, ORM 없음), Vercel입니다.
 
@@ -10,8 +10,8 @@
 |---|---|
 | `DATABASE_URL` | 앱이 쓰는 DB. 로컬은 Neon `dev` 브랜치, 운영은 `main` 브랜치 |
 | `TEST_DATABASE_URL` | 통합 테스트용 DB. **테스트마다 모든 테이블을 비웁니다.** |
-| `ADMIN_PASSWORD` | 운영자 로그인 비밀번호. 충분히 길고 무작위인 값으로 설정합니다. |
-| `SESSION_SECRET` | 운영자 세션 쿠키 서명 키 (32바이트 이상 무작위 값). 바꾸면 모든 운영자 세션이 끊깁니다. |
+| `ADMIN_PASSWORD` | 관리자 로그인 비밀번호. 충분히 길고 무작위인 값으로 설정합니다. |
+| `SESSION_SECRET` | 관리자 세션 쿠키 서명 키 (32바이트 이상 무작위 값). 바꾸면 모든 관리자 세션이 끊깁니다. |
 
 로컬에서는 `.env.local`에 넣습니다. 필수 값이 없으면 그 값을 쓰는 시점에 어떤 변수가 빠졌는지 알려주는 오류가 납니다.
 
@@ -52,7 +52,7 @@ DATABASE_URL="<main 브랜치 연결 문자열>" node scripts/migrate.mts
 npm install
 npm run db:migrate
 npm run db:seed    # 빈 DB에 예시 투표 5개 (진행 중 3, 마감 2)
-npm run dev        # http://localhost:3000, 헤더의 "운영자" → /admin
+npm run dev        # http://localhost:3000, 헤더의 "관리자" → /admin
 ```
 
 `npm run db:seed -- --reset`은 기존 투표를 모두 지우고 예시를 다시 넣습니다. `TEST_DATABASE_URL`이 dev 브랜치와 같다면 `npm test`가 끝날 때 DB가 비므로, 테스트 뒤에는 시드를 다시 넣어야 합니다.
@@ -67,9 +67,9 @@ npm run lint
 
 테스트 범위:
 - **투표 모듈 (`lib/polls.ts`):** `TEST_DATABASE_URL`의 실제 DB로 통합 테스트합니다. 시작할 때 마이그레이션을 적용하고, 테스트마다 테이블을 비우며, 파일을 순차 실행합니다.
-- **운영자 인증 모듈 (`lib/admin-auth.ts`):** DB 없이 단위 테스트합니다.
+- **관리자 인증 모듈 (`lib/admin-auth.ts`):** DB 없이 단위 테스트합니다.
 
-Server Action, 페이지, `proxy.ts`는 자동 테스트하지 않습니다. 그래서 운영자 Server Action을 추가하거나 고칠 때는 첫 줄에서 `requireAdmin()`을 부르는지 리뷰에서 확인하세요 (ADR-0004).
+Server Action, 페이지, `proxy.ts`는 자동 테스트하지 않습니다. 그래서 관리자 Server Action을 추가하거나 고칠 때는 첫 줄에서 `requireAdmin()`을 부르는지 리뷰에서 확인하세요 (ADR-0004).
 
 ## 배포 (Vercel)
 

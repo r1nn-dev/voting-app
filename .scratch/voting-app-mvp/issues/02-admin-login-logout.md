@@ -1,12 +1,12 @@
-# 02: 운영자 로그인/로그아웃
+# 02: 관리자 로그인/로그아웃
 
-**What to build:** 운영자가 `/admin/login`에서 환경변수 비밀번호 하나로 로그인하면 `/admin`에 들어갈 수 있고, 로그인 상태가 7일간 유지된다. 로그아웃하면 다시 로그인해야 한다. 로그인하지 않은 채 관리 경로에 들어가면 로그인 페이지로 보내진다. `/admin`은 아직 로그아웃 버튼만 있는 껍데기 화면이다. 스펙: `.scratch/voting-app-mvp/spec.md`. 결정 배경: ADR-0004.
+**What to build:** 관리자가 `/admin/login`에서 환경변수 비밀번호 하나로 로그인하면 `/admin`에 들어갈 수 있고, 로그인 상태가 7일간 유지된다. 로그아웃하면 다시 로그인해야 한다. 로그인하지 않은 채 관리 경로에 들어가면 로그인 페이지로 보내진다. `/admin`은 아직 로그아웃 버튼만 있는 껍데기 화면이다. 스펙: `.scratch/voting-app-mvp/spec.md`. 결정 배경: ADR-0004.
 
 **Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
 
-- [ ] 운영자 인증 모듈은 DB와 쿠키 입출력에 의존하지 않고, 다음 세 가지를 제공한다.
+- [ ] 관리자 인증 모듈은 DB와 쿠키 입출력에 의존하지 않고, 다음 세 가지를 제공한다.
   - `verifyAdminPassword`: 타이밍 공격에 안전한 비교, 실패 시 약 1초 지연
   - `createAdminSession`: `jose` 서명, 키는 `SESSION_SECRET`, 7일 만료
   - `verifyAdminSession`
@@ -18,5 +18,5 @@
 - [ ] 로그인한 상태로 `/admin/login`에 오면 `/admin`으로 이동한다.
 - [ ] `/admin`에 로그아웃 버튼이 있고, 누르면 세션 쿠키가 지워지고 로그인 페이지로 이동한다.
 - [ ] `proxy`(Next 16 규칙. `middleware` 아님)는 세션이 없거나 유효하지 않으면 관리 경로에서 `/admin/login`으로 리다이렉트한다. 로그인 페이지 자체는 예외다.
-- [ ] 관리 페이지는 proxy에만 의존하지 않고, 서버에서 직접 세션을 검증한다. 운영자 Server Action이 첫 줄에서 세션을 검증할 수 있도록 공용 헬퍼를 둔다.
+- [ ] 관리 페이지는 proxy에만 의존하지 않고, 서버에서 직접 세션을 검증한다. 관리자 Server Action이 첫 줄에서 세션을 검증할 수 있도록 공용 헬퍼를 둔다.
 - [ ] `ADMIN_PASSWORD`나 `SESSION_SECRET`이 없으면 명확한 오류로 실패한다.

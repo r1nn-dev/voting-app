@@ -17,7 +17,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               투표
             </Link>
             <Link href="/admin" className="text-sm text-zinc-500 hover:underline">
-              운영자
+              관리자
             </Link>
           </div>
         </header>
