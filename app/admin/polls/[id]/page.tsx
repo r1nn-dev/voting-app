@@ -8,6 +8,7 @@ import { StatusBadge } from "../../../status-badge";
 import { ConfirmActionButton } from "../../confirm-action-button";
 import { closePollAction, deletePollAndReturnToListAction } from "../../poll-actions";
 import { ExtendDeadlineForm } from "./extend-deadline-form";
+import { RankChart } from "./rank-chart";
 
 export default async function AdminPollPage({ params }: PageProps<"/admin/polls/[id]">) {
   await requireAdmin();
@@ -37,6 +38,8 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
           공개 페이지 보기 →
         </Link>
       </div>
+
+      <RankChart ranking={poll.ranking} isClosed={poll.status === "closed"} />
 
       {poll.status === "open" && (
         <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">

@@ -369,7 +369,7 @@ describe("getPollForAdmin", () => {
   it("진행 중인 투표의 질문, 상태, 마감 예정 시각을 보여준다", async () => {
     const id = await createOpenPoll("점심?", ["a", "b"], at(DAY));
 
-    expect(await polls.getPollForAdmin(id)).toEqual({
+    expect(await polls.getPollForAdmin(id)).toMatchObject({
       id,
       question: "점심?",
       status: "open",
@@ -401,6 +401,65 @@ describe("getPollForAdmin", () => {
 
   it("없는 투표는 null", async () => {
     expect(await polls.getPollForAdmin("nope000000")).toBeNull();
+  });
+});
+
+describe("getPollForAdmin 순위와 격차", () => {
+  async function ranking(options: string[], votesPerOption: number[]) {
+    const id = await createOpenPoll("점심?", options);
+    await castVotes(id, votesPerOption);
+    const poll = await polls.getPollForAdmin(id);
+    return poll!.ranking;
+  }
+
+  it("선택지를 득표순으로 정렬하고 경쟁 순위를 붙인다 (동점은 같은 순위, 다음 순위는 건너뜀)", async () => {
+    const { options } = await ranking(["a", "b", "c", "d"], [1, 3, 3, 0]);
+
+    expect(options.map(({ label, rank, votes, percent, isTop }) => [label, rank, votes, percent, isTop]))
+      .toEqual([
+        ["b", 1, 3, 42.9, true],
+        ["c", 1, 3, 42.9, true],
+        ["a", 3, 1, 14.3, false],
+        ["d", 4, 0, 0, false],
+      ]);
+  });
+
+  it("요약에 총 표 수, 1위, 1위와 2위의 차이(표, 반올림 전 비율로 계산한 %p)를 담는다", async () => {
+    const { summary } = await ranking(["a", "b", "c"], [2, 1, 0]);
+
+    expect(summary).toEqual({
+      total: 3,
+      leaders: [expect.objectContaining({ label: "a" })],
+      isTie: false,
+      gap: { votes: 1, percentPoints: 33.3 },
+    });
+  });
+
+  it("1위가 동점이면 동점인 선택지를 모두 1위로 두고, 차이는 0이다", async () => {
+    const { summary } = await ranking(["a", "b", "c"], [2, 2, 1]);
+
+    expect(summary.isTie).toBe(true);
+    expect(summary.leaders.map((option) => option.label)).toEqual(["a", "b"]);
+    expect(summary.gap).toEqual({ votes: 0, percentPoints: 0 });
+  });
+
+  it("표가 없으면 1위와 격차가 없다", async () => {
+    const { summary } = await ranking(["a", "b"], [0, 0]);
+
+    expect(summary).toEqual({ total: 0, leaders: [], isTie: false, gap: null });
+  });
+
+  it("마감 전에도 관리자에게는 득표 현황이 있고, 투표자에게는 여전히 수치가 없다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"]);
+    await castVotes(id, [1, 2]);
+
+    const admin = await polls.getPollForAdmin(id);
+    const voter = await polls.getPollForVoter(id, null);
+
+    expect(admin?.status).toBe("open");
+    expect(admin?.ranking.summary.total).toBe(3);
+    expect(voter).not.toHaveProperty("results");
+    expect(JSON.stringify(voter)).not.toMatch(/votes|total|percent|rank/i);
   });
 });
 
