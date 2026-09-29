@@ -3,10 +3,18 @@
 import { useActionState, useState } from "react";
 import { kstInputFromNow } from "@/lib/kst-time";
 import { POLL_LIMITS } from "@/lib/poll-limits";
+import { PlusIcon, XIcon } from "../../icons";
+import {
+  buttonPrimary,
+  buttonSecondary,
+  card,
+  cardPadding,
+  fieldError,
+  hint,
+  input as inputClass,
+  label,
+} from "../../ui";
 import { createPollAction } from "../poll-actions";
-
-const inputClass =
-  "w-full rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900";
 
 let nextKey = 0;
 const newOption = () => ({ key: nextKey++, value: "" });
@@ -28,9 +36,9 @@ export function NewPollForm({ initialDeadline }: { initialDeadline: string }) {
   const errors = state.errors;
 
   return (
-    <form action={formAction} className="flex flex-col gap-6">
+    <form action={formAction} className={`${card} ${cardPadding} flex flex-col gap-7`}>
       <div className="flex flex-col gap-2">
-        <label htmlFor="question" className="font-medium">
+        <label htmlFor="question" className={label}>
           질문
         </label>
         <input
@@ -40,14 +48,15 @@ export function NewPollForm({ initialDeadline }: { initialDeadline: string }) {
           onChange={(event) => setQuestion(event.target.value)}
           maxLength={POLL_LIMITS.questionMaxLength}
           required
-          className={inputClass}
+          placeholder="예: 다음 모임은 언제가 좋을까요?"
+          className={`${inputClass} text-base`}
         />
-        {errors?.question && <p className="text-sm text-red-600">{errors.question}</p>}
+        {errors?.question && <p className={fieldError}>{errors.question}</p>}
       </div>
 
       <div className="flex flex-col gap-2">
-        <label htmlFor="deadline" className="font-medium">
-          마감 예정 시각 <span className="text-sm font-normal text-zinc-500">(한국 시간)</span>
+        <label htmlFor="deadline" className={label}>
+          마감 예정 시각 <span className="font-normal text-zinc-500">(한국 시간)</span>
         </label>
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -57,33 +66,39 @@ export function NewPollForm({ initialDeadline }: { initialDeadline: string }) {
             value={deadline}
             onChange={(event) => setDeadline(event.target.value)}
             required
-            className="rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+            className={`${inputClass} w-auto`}
           />
           {QUICK_DEADLINES.map(({ label, ms }) => (
             <button
               key={label}
               type="button"
               onClick={() => setDeadline(kstInputFromNow(ms))}
-              className="rounded-md border border-zinc-300 px-3 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+              className={`${buttonSecondary} rounded-full`}
             >
               {label}
             </button>
           ))}
         </div>
-        <p className="text-sm text-zinc-500">
+        <p className={hint}>
           지금부터 {POLL_LIMITS.deadlineMinMinutes}분 뒤 ~ {POLL_LIMITS.deadlineMaxDays}일 뒤.
           시각이 지나면 자동으로 마감됩니다.
         </p>
-        {errors?.deadline && <p className="text-sm text-red-600">{errors.deadline}</p>}
+        {errors?.deadline && <p className={fieldError}>{errors.deadline}</p>}
       </div>
 
-      <fieldset className="flex flex-col gap-2">
-        <legend className="mb-2 font-medium">
-          선택지 ({POLL_LIMITS.minOptions}~{POLL_LIMITS.maxOptions}개)
+      <fieldset className="flex flex-col gap-2.5">
+        <legend className={`${label} mb-2`}>
+          선택지{" "}
+          <span className="font-normal text-zinc-500">
+            ({POLL_LIMITS.minOptions}~{POLL_LIMITS.maxOptions}개)
+          </span>
         </legend>
         {options.map((option, index) => (
           <div key={option.key} className="flex flex-col gap-1">
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-xs font-semibold tabular-nums text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                {index + 1}
+              </span>
               <input
                 name="option"
                 aria-label={`선택지 ${index + 1}`}
@@ -97,6 +112,7 @@ export function NewPollForm({ initialDeadline }: { initialDeadline: string }) {
                 }
                 maxLength={POLL_LIMITS.optionMaxLength}
                 required
+                placeholder={`선택지 ${index + 1}`}
                 className={inputClass}
               />
               <button
@@ -105,31 +121,30 @@ export function NewPollForm({ initialDeadline }: { initialDeadline: string }) {
                   setOptions((current) => current.filter((o) => o.key !== option.key))
                 }
                 disabled={options.length <= POLL_LIMITS.minOptions}
-                className="shrink-0 rounded-md px-3 text-sm text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:hover:bg-zinc-800"
+                aria-label={`선택지 ${index + 1} 삭제`}
+                className="flex size-9 shrink-0 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-30 dark:hover:bg-red-950/40"
               >
-                삭제
+                <XIcon className="size-4" />
               </button>
             </div>
             {errors?.optionErrors?.[index] && (
-              <p className="text-sm text-red-600">{errors.optionErrors[index]}</p>
+              <p className={`${fieldError} pl-9`}>{errors.optionErrors[index]}</p>
             )}
           </div>
         ))}
-        {errors?.options && <p className="text-sm text-red-600">{errors.options}</p>}
+        {errors?.options && <p className={fieldError}>{errors.options}</p>}
         <button
           type="button"
           onClick={() => setOptions((current) => [...current, newOption()])}
           disabled={options.length >= POLL_LIMITS.maxOptions}
-          className="self-start text-sm text-zinc-600 hover:underline disabled:opacity-30 dark:text-zinc-400"
+          className="ml-9 flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-300 py-2.5 text-sm font-medium text-zinc-500 transition hover:border-indigo-400 hover:bg-indigo-50/50 hover:text-indigo-700 disabled:opacity-30 dark:border-zinc-700 dark:hover:bg-indigo-950/30 dark:hover:text-indigo-300"
         >
-          + 선택지 추가
+          <PlusIcon className="size-4" />
+          선택지 추가
         </button>
       </fieldset>
 
-      <button
-        disabled={pending}
-        className="rounded-md bg-zinc-900 px-4 py-2 text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-      >
+      <button disabled={pending} className={`${buttonPrimary} w-full py-3 text-base`}>
         {pending ? "만드는 중…" : "투표 만들기"}
       </button>
     </form>

@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { formatKst, parseKstInput, toKstInputValue } from "@/lib/kst-time";
+import { buttonGhost, buttonPrimary, buttonSecondary, fieldError, input } from "../../../ui";
 import { extendDeadlineAction } from "../../poll-actions";
 
 const HOUR = 60 * 60 * 1000;
@@ -49,7 +50,7 @@ export function ExtendDeadlineForm({ pollId, deadline }: { pollId: string; deadl
             setConfirming(false);
           }}
           required
-          className="rounded-md border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+          className={`${input} w-auto`}
         />
         {QUICK_EXTENSIONS.map(({ label, ms }) => (
           <button
@@ -60,7 +61,7 @@ export function ExtendDeadlineForm({ pollId, deadline }: { pollId: string; deadl
               setValue(toKstInputValue(new Date(current.getTime() + ms)));
               setConfirming(false);
             }}
-            className="rounded-md border border-zinc-300 px-3 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            className={`${buttonSecondary} rounded-full`}
           >
             {label}
           </button>
@@ -68,21 +69,18 @@ export function ExtendDeadlineForm({ pollId, deadline }: { pollId: string; deadl
       </div>
 
       {confirming && chosen ? (
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-zinc-600 dark:text-zinc-400">
-            {formatKst(chosen)}(으)로 연장할까요?
+        <div className="flex flex-wrap items-center gap-2 rounded-xl bg-indigo-50 px-3 py-2 text-sm dark:bg-indigo-950/40">
+          <span className="text-zinc-700 dark:text-zinc-300">
+            <strong>{formatKst(chosen)}</strong>(으)로 연장할까요?
           </span>
-          <button
-            disabled={pending}
-            className="rounded-md bg-zinc-900 px-3 py-1.5 text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-          >
+          <button disabled={pending} className={`${buttonPrimary} py-1.5`}>
             {pending ? "연장 중…" : "연장"}
           </button>
           <button
             type="button"
             disabled={pending}
             onClick={() => setConfirming(false)}
-            className="rounded-md px-3 py-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            className={`${buttonGhost} py-1.5`}
           >
             취소
           </button>
@@ -92,14 +90,14 @@ export function ExtendDeadlineForm({ pollId, deadline }: { pollId: string; deadl
           type="button"
           disabled={!chosen}
           onClick={() => setConfirming(true)}
-          className="self-start rounded-md border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          className={`${buttonPrimary} self-start`}
         >
           연장하기
         </button>
       )}
 
       {state.error && (
-        <p aria-live="polite" className="text-sm text-red-600">
+        <p aria-live="polite" className={fieldError}>
           {state.error}
         </p>
       )}

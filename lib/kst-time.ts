@@ -57,6 +57,11 @@ export function formatRemaining(until: Date, from: Date = new Date()): string {
   return `${Math.floor(hours / 24)}일`;
 }
 
+/** For display only (e.g. "곧 마감"): whether `until` is less than `withinMs` away. */
+export function isWithin(until: Date, withinMs: number, from: Date = new Date()): boolean {
+  return until.getTime() - from.getTime() < withinMs;
+}
+
 /** Whole days left, rounded up and at least 1: "30일" for 29.9 days, "1일" for 5 hours. */
 export function formatDaysLeft(until: Date, from: Date = new Date()): string {
   const days = Math.ceil((until.getTime() - from.getTime()) / 86_400_000);

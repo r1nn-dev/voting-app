@@ -27,17 +27,17 @@ export function ShareBar({ results }: { results: ShareResults }) {
     .join(", ");
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       <div
         role="img"
         aria-label={`결과 비중: ${summary}`}
-        className="flex h-10 w-full overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-800"
+        className="flex h-9 w-full gap-0.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800"
       >
         {results.options.map((option, index) =>
           option.votes === 0 ? null : (
             <div
               key={option.id}
-              className={`flex items-center justify-center overflow-hidden text-xs font-medium text-white ${
+              className={`flex items-center justify-center overflow-hidden text-xs font-semibold text-white first:rounded-l-full last:rounded-r-full ${
                 index === lastVisible ? "grow" : ""
               }`}
               style={{ width: `${option.percent}%`, backgroundColor: OPTION_COLORS[option.position] }}
@@ -48,27 +48,37 @@ export function ShareBar({ results }: { results: ShareResults }) {
         )}
       </div>
 
-      <ul className="flex flex-col gap-2">
+      <ul className="flex flex-col gap-1">
         {results.options.map((option) => (
-          <li key={option.id} className="flex items-center justify-between gap-4 text-sm">
-            <span className="flex min-w-0 items-center gap-2">
+          <li
+            key={option.id}
+            className={`flex items-center justify-between gap-4 rounded-lg px-3 py-2 text-sm ${
+              option.isTop ? "bg-zinc-50 dark:bg-zinc-800/60" : ""
+            }`}
+          >
+            <span className="flex min-w-0 items-center gap-2.5">
               <span
                 aria-hidden
-                className="size-3 shrink-0 rounded-sm"
+                className="size-3 shrink-0 rounded-full"
                 style={{ backgroundColor: OPTION_COLORS[option.position] }}
               />
               <span className={`truncate ${option.isTop ? "font-semibold" : ""}`}>
                 {option.label}
               </span>
               {option.isTop && (
-                <span className="shrink-0 rounded bg-emerald-100 px-1.5 text-xs text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20 dark:bg-emerald-950/60 dark:text-emerald-300">
                   1위
                 </span>
               )}
-              {option.isMine && <span className="shrink-0 text-xs text-zinc-500">내 선택</span>}
+              {option.isMine && (
+                <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-600/20 dark:bg-indigo-950/60 dark:text-indigo-300">
+                  내 선택
+                </span>
+              )}
             </span>
-            <span className="shrink-0 tabular-nums text-zinc-600 dark:text-zinc-400">
-              {option.percent.toFixed(1)}% · {option.votes}표
+            <span className="shrink-0 tabular-nums">
+              <span className="font-semibold">{option.percent.toFixed(1)}%</span>
+              <span className="ml-1.5 text-zinc-500 dark:text-zinc-400">{option.votes}표</span>
             </span>
           </li>
         ))}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { buttonDanger, buttonGhost, buttonSecondary } from "../ui";
 
 /** A button that asks for confirmation inline before running a Server Action. */
 export function ConfirmActionButton({
@@ -16,17 +17,13 @@ export function ConfirmActionButton({
 }) {
   const [confirming, setConfirming] = useState(false);
   const [pending, startTransition] = useTransition();
-  const color =
-    tone === "danger"
-      ? "text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
-      : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800";
 
   if (!confirming) {
     return (
       <button
         type="button"
         onClick={() => setConfirming(true)}
-        className={`rounded-md px-2 py-1 text-sm ${color}`}
+        className={tone === "danger" ? `${buttonDanger} border border-red-200 dark:border-red-900` : buttonSecondary}
       >
         {label}
       </button>
@@ -34,13 +31,19 @@ export function ConfirmActionButton({
   }
 
   return (
-    <span className="flex flex-wrap items-center gap-2 text-sm">
-      <span className="text-zinc-600 dark:text-zinc-400">{confirmMessage}</span>
+    <span
+      className={`flex flex-wrap items-center gap-2 rounded-xl px-3 py-1.5 text-sm ${
+        tone === "danger" ? "bg-red-50 dark:bg-red-950/40" : "bg-zinc-100 dark:bg-zinc-800"
+      }`}
+    >
+      <span className="text-zinc-700 dark:text-zinc-300">{confirmMessage}</span>
       <button
         type="button"
         disabled={pending}
         onClick={() => startTransition(action)}
-        className={`rounded-md px-2 py-1 font-medium disabled:opacity-50 ${color}`}
+        className={`${
+          tone === "danger" ? "bg-red-600 hover:bg-red-700" : "bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900"
+        } rounded-lg px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50`}
       >
         {pending ? "처리 중…" : label}
       </button>
@@ -48,7 +51,7 @@ export function ConfirmActionButton({
         type="button"
         disabled={pending}
         onClick={() => setConfirming(false)}
-        className="rounded-md px-2 py-1 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        className={`${buttonGhost} px-2 py-1.5`}
       >
         취소
       </button>
