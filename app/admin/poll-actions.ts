@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/admin-session";
 import { getSql } from "@/lib/db";
+import { parseKstInput } from "@/lib/kst-time";
 import { createPolls, type CreatePollErrors } from "@/lib/polls";
 import { revalidatePollPages } from "../revalidate-polls";
 
@@ -17,6 +18,7 @@ export async function createPollAction(
   const result = await createPolls(getSql()).createPoll({
     question: String(formData.get("question") ?? ""),
     options: formData.getAll("option").map(String),
+    deadline: parseKstInput(formData.get("deadline")),
   });
   if (!result.ok) return { errors: result.errors };
 

@@ -5,12 +5,18 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
+
 type SamplePoll = {
   question: string;
   options: string[];
   /** Votes per option, in the same order. */
   votes: number[];
-  closed?: boolean;
+  /** 마감 예정 시각 relative to now; negative means it has already passed. */
+  deadlineIn: number;
+  /** Set when the admin closed it by hand, this long ago. */
+  closedAgo?: number;
 };
 
 const SAMPLE_POLLS: SamplePoll[] = [
@@ -18,28 +24,34 @@ const SAMPLE_POLLS: SamplePoll[] = [
     question: "오늘 점심 뭐 먹을까요?",
     options: ["김밥", "라면", "돈가스", "제육볶음"],
     votes: [3, 2, 4, 1],
+    deadlineIn: 3 * HOUR,
   },
   {
     question: "다음 정기 모임은 무슨 요일이 좋을까요?",
     options: ["월요일", "화요일", "수요일", "목요일", "금요일"],
     votes: [1, 0, 4, 2, 3],
+    deadlineIn: 2 * DAY,
   },
   {
     question: "회의는 대면과 온라인 중 어느 쪽이 좋나요?",
     options: ["대면", "온라인", "상관없음"],
     votes: [0, 0, 0],
+    deadlineIn: 6 * DAY,
   },
   {
     question: "MT 장소는 어디로 갈까요?",
     options: ["가평", "강릉", "부산"],
     votes: [6, 4, 2],
-    closed: true,
+    // Closed by hand before its deadline.
+    deadlineIn: DAY,
+    closedAgo: 2 * HOUR,
   },
   {
     question: "가장 좋아하는 계절은?",
     options: ["봄", "여름", "가을", "겨울"],
     votes: [5, 2, 5, 1],
-    closed: true,
+    // Closed on its own when the deadline passed.
+    deadlineIn: -DAY,
   },
 ];
 
@@ -67,10 +79,13 @@ if (count > 0) {
 // Staggered created_at so the newest-first list shows them in the order above.
 for (const [index, poll] of [...SAMPLE_POLLS].reverse().entries()) {
   const id = newPollId();
-  const createdAt = new Date(Date.now() - (SAMPLE_POLLS.length - index) * 60 * 60 * 1000);
+  const now = Date.now();
+  const createdAt = new Date(now - (SAMPLE_POLLS.length - index) * DAY);
+  const deadline = new Date(now + poll.deadlineIn);
+  const closedAt = poll.closedAgo === undefined ? null : new Date(now - poll.closedAgo);
   await sql`
-    INSERT INTO polls (id, question, created_at, closed_at)
-    VALUES (${id}, ${poll.question}, ${createdAt}, ${poll.closed ? new Date() : null})
+    INSERT INTO polls (id, question, created_at, deadline, closed_at)
+    VALUES (${id}, ${poll.question}, ${createdAt}, ${deadline}, ${closedAt})
   `;
   const optionRows = (await sql`
     INSERT INTO options (poll_id, label, position)

@@ -2,7 +2,15 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { resetDatabase, testSql } from "@/tests/db";
 import { createPolls } from "./polls";
 
-const polls = createPolls(testSql);
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+/** Every test runs at T0 unless it moves the clock with pollsAt(). */
+const T0 = new Date("2030-01-01T00:00:00Z");
+const at = (offsetMs: number) => new Date(T0.getTime() + offsetMs);
+const pollsAt = (now: Date) => createPolls(testSql, { now: () => now });
+const polls = pollsAt(T0);
 
 beforeEach(async () => {
   await resetDatabase();
@@ -13,8 +21,12 @@ afterAll(async () => {
   await resetDatabase();
 });
 
-async function createOpenPoll(question = "점심 뭐 먹지?", options = ["김밥", "라면", "돈가스"]) {
-  const result = await polls.createPoll({ question, options });
+async function createOpenPoll(
+  question = "점심 뭐 먹지?",
+  options = ["김밥", "라면", "돈가스"],
+  deadline = at(DAY),
+) {
+  const result = await polls.createPoll({ question, options, deadline });
   if (!result.ok) throw new Error(`투표 생성 실패: ${JSON.stringify(result.errors)}`);
   return result.id;
 }
@@ -202,6 +214,53 @@ describe("closePoll", () => {
   });
 });
 
+describe("자동 마감", () => {
+  it("마감 예정 시각 전에는 진행 중이고 표를 받는다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(HOUR));
+    const [a] = await optionIds(id);
+    const justBefore = pollsAt(at(HOUR - 1000));
+
+    expect((await justBefore.getPollForVoter(id, null))?.status).toBe("open");
+    expect(await justBefore.castVote(id, a, alice)).toEqual({ ok: true });
+  });
+
+  it("마감 예정 시각이 지나면 마감되어 결과가 공개되고, 표를 거부하며, 마감 시각은 마감 예정 시각이다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(HOUR));
+    await castVotes(id, [2, 1]);
+    const later = pollsAt(at(2 * HOUR));
+
+    const poll = await later.getPollForVoter(id, null);
+
+    expect(poll?.status).toBe("closed");
+    expect(poll?.status === "closed" && poll.closedAt).toEqual(at(HOUR));
+    expect(poll?.status === "closed" && poll.results.total).toBe(3);
+    expect(await later.castVote(id, (await optionIds(id))[0], bob)).toEqual({
+      ok: false,
+      reason: "closed",
+    });
+    expect((await later.listPolls())[0]).toMatchObject({ isClosed: true, closedAt: at(HOUR) });
+  });
+
+  it("마감 예정 시각 전에 직접 마감하면 마감 시각은 직접 마감한 시각이다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(DAY));
+
+    await pollsAt(at(HOUR)).closePoll(id);
+
+    const poll = await pollsAt(at(2 * HOUR)).getPollForVoter(id, null);
+    expect(poll?.status === "closed" && poll.closedAt).toEqual(at(HOUR));
+  });
+
+  it("마감 예정 시각이 지난 뒤 직접 마감해도 성공하고, 마감 시각은 그대로다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(HOUR));
+    const later = pollsAt(at(3 * HOUR));
+
+    expect(await later.closePoll(id)).toEqual({ ok: true });
+
+    const poll = await later.getPollForVoter(id, null);
+    expect(poll?.status === "closed" && poll.closedAt).toEqual(at(HOUR));
+  });
+});
+
 describe("deletePoll", () => {
   it("표가 있는 투표를 지우면 어디서도 조회되지 않고, 다른 투표는 그대로다", async () => {
     const doomed = await createOpenPoll("지울 투표");
@@ -263,6 +322,47 @@ describe("createPoll", () => {
     expect(poll?.options.map((option) => option.label)).toEqual(["김밥", "라면", "돈가스"]);
   });
 
+  const badDeadlines: [string, Date | null][] = [
+    ["없음", null],
+    ["날짜가 아님", new Date("not a date")],
+    ["지금부터 10분 미만", at(10 * MINUTE - 1000)],
+    ["이미 지난 시각", at(-HOUR)],
+    ["지금부터 30일 초과", at(30 * DAY + 1000)],
+  ];
+
+  it.each(badDeadlines)("마감 예정 시각이 %s이면 오류를 돌려주고 저장하지 않는다", async (_, deadline) => {
+    const result = await polls.createPoll({ question: "q", options: ["a", "b"], deadline });
+
+    expect(result).toEqual({ ok: false, errors: { deadline: expect.any(String) } });
+    expect(await polls.listPolls()).toEqual([]);
+  });
+
+  it("마감 예정 시각 경계값(정확히 10분 뒤, 30일 뒤)은 받아들인다", async () => {
+    const results = await Promise.all([
+      polls.createPoll({ question: "q", options: ["a", "b"], deadline: at(10 * MINUTE) }),
+      polls.createPoll({ question: "q", options: ["a", "b"], deadline: at(30 * DAY) }),
+    ]);
+
+    expect(results.map((result) => result.ok)).toEqual([true, true]);
+  });
+
+  it("다른 입력 오류와 마감 예정 시각 누락을 함께 알린다", async () => {
+    const result = await polls.createPoll({ question: "", options: ["a", "b"], deadline: null });
+
+    expect(result).toEqual({
+      ok: false,
+      errors: { question: expect.any(String), deadline: expect.any(String) },
+    });
+  });
+
+  it("만든 투표는 정한 마감 예정 시각을 가진다", async () => {
+    const id = await createOpenPoll("점심?", ["a", "b"], at(3 * HOUR));
+
+    const poll = await polls.getPollForVoter(id, null);
+
+    expect(poll?.status === "open" && poll.deadline).toEqual(at(3 * HOUR));
+  });
+
   it("질문과 선택지의 앞뒤 공백을 제거해 저장한다", async () => {
     const id = await createOpenPoll("  점심?  ", [" 김밥", "라면  "]);
 
@@ -284,7 +384,7 @@ describe("createPoll", () => {
   ];
 
   it.each(invalidInputs)("%s이면 필드별 오류를 돌려주고 저장하지 않는다", async (_, input, errors) => {
-    const result = await polls.createPoll(input);
+    const result = await polls.createPoll({ ...input, deadline: at(DAY) });
 
     expect(result).toEqual({ ok: false, errors: expect.objectContaining(errors) });
     expect(await polls.listPolls()).toEqual([]);
@@ -292,8 +392,8 @@ describe("createPoll", () => {
 
   it("경계값(질문 200자, 선택지 100자, 선택지 2개와 10개)은 받아들인다", async () => {
     const results = await Promise.all([
-      polls.createPoll({ question: "가".repeat(200), options: ["가".repeat(100), "b"] }),
-      polls.createPoll({ question: "q", options: Array.from({ length: 10 }, (_, i) => `${i}`) }),
+      polls.createPoll({ question: "가".repeat(200), options: ["가".repeat(100), "b"], deadline: at(DAY) }),
+      polls.createPoll({ question: "q", options: Array.from({ length: 10 }, (_, i) => `${i}`), deadline: at(DAY) }),
     ]);
     expect(results.map((result) => result.ok)).toEqual([true, true]);
   });

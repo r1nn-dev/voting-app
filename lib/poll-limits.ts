@@ -4,4 +4,8 @@ export const POLL_LIMITS = {
   optionMaxLength: 100,
   minOptions: 2,
   maxOptions: 10,
+  /** 마감 예정 시각 must be at least this far from now... */
+  deadlineMinMinutes: 10,
+  /** ...and at most this far. */
+  deadlineMaxDays: 30,
 } as const;

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/admin-session";
 import { getSql } from "@/lib/db";
+import { formatKst, formatRemaining } from "@/lib/kst-time";
 import { createPolls } from "@/lib/polls";
 import { TallyBars } from "../tally-bars";
 import { StatusBadge } from "../status-badge";
@@ -45,7 +46,10 @@ export default async function AdminPage() {
                 <StatusBadge isClosed={poll.isClosed} />
               </div>
               <p className="mb-2 text-sm text-zinc-500">
-                {poll.isClosed ? "결과" : "득표 현황"} · 총 {poll.tally.total}표
+                {poll.isClosed ? "결과" : "득표 현황"} · 총 {poll.tally.total}표 ·{" "}
+                {poll.closedAt
+                  ? `${formatKst(poll.closedAt)} 마감됨`
+                  : `${formatKst(poll.deadline)} 마감 예정 (${formatRemaining(poll.deadline)} 남음)`}
               </p>
               <TallyBars tally={poll.tally} />
               <div className="mt-4 flex flex-wrap items-center justify-end gap-2">

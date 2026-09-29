@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { connection } from "next/server";
 import { getSql } from "@/lib/db";
+import { formatRemaining } from "@/lib/kst-time";
 import { createPolls } from "@/lib/polls";
 import { StatusBadge } from "./status-badge";
 
@@ -22,7 +23,12 @@ export default async function Home() {
                 className="flex items-center justify-between gap-4 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-900"
               >
                 <span className="truncate">{poll.question}</span>
-                <StatusBadge isClosed={poll.isClosed} />
+                <span className="flex shrink-0 items-center gap-2">
+                  {!poll.isClosed && (
+                    <span className="text-xs text-zinc-500">{formatRemaining(poll.deadline)} 남음</span>
+                  )}
+                  <StatusBadge isClosed={poll.isClosed} />
+                </span>
               </Link>
             </li>
           ))}

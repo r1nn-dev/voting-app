@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { getSql } from "@/lib/db";
+import { formatKst, formatRemaining } from "@/lib/kst-time";
 import { createPolls } from "@/lib/polls";
 import { readVoterId } from "@/lib/voter-session";
 import { TallyBars } from "../../tally-bars";
@@ -15,10 +16,15 @@ export default async function PollPage({ params }: PageProps<"/polls/[id]">) {
 
   return (
     <section>
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="mb-2 flex items-start justify-between gap-4">
         <h1 className="text-2xl font-bold">{poll.question}</h1>
         <StatusBadge isClosed={poll.status === "closed"} />
       </div>
+      <p className="mb-6 text-sm text-zinc-500">
+        {poll.status === "open"
+          ? `${formatKst(poll.deadline)} 마감 · ${formatRemaining(poll.deadline)} 남음`
+          : `${formatKst(poll.closedAt)} 마감됨`}
+      </p>
 
       {poll.status === "closed" ? (
         poll.results.total === 0 ? (
