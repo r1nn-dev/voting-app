@@ -31,7 +31,7 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">투표 관리</h1>
+          <h1 className="text-2xl font-bold tracking-tight">투표 관리</h1>
           <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
             마감 전에도 득표 현황을 볼 수 있습니다.
           </p>

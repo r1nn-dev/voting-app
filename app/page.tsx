@@ -16,7 +16,7 @@ export default async function Home() {
   return (
     <div className="flex flex-col gap-12">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">투표</h1>
+        <h1 className="text-2xl font-bold tracking-tight">투표 목록</h1>
         <p className="mt-2 text-zinc-500 dark:text-zinc-400">
           진행 중인 투표에 참여하고, 마감된 투표의 결과를 확인하세요.
         </p>

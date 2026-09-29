@@ -1,5 +1,8 @@
 // Shared class names, so every card, button and input looks the same.
 
+/** The one page width, used by the header, main content and footer. */
+export const container = "mx-auto w-full max-w-5xl px-5 sm:px-8";
+
 export const card =
   "rounded-2xl border border-zinc-200/80 bg-white shadow-sm shadow-zinc-900/[0.03] dark:border-zinc-800 dark:bg-zinc-900 dark:shadow-none";
 

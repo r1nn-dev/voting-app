@@ -1,58 +1,63 @@
 import Link from "next/link";
 import { LogoMark } from "./icons";
+import { container } from "./ui";
+
+export const SERVICE_NAME = "한표";
+export const SERVICE_TAGLINE = "질문 하나, 선택지 하나. 가볍게 던지는 한 표";
 
 const MAKER = "조하린";
 const REPOSITORY = "github.com/r1nn-dev/voting-app";
 
-/** Site footer laid out like a service's business-info footer, with the maker's name. */
+const LINKS = [
+  { label: "투표 목록", href: "/" },
+  { label: "관리자", href: "/admin" },
+  { label: "GitHub 저장소", href: `https://${REPOSITORY}`, external: true },
+];
+
+/** Small-print footer: links, one line of service info, then the copyright. */
 export function SiteFooter() {
   return (
-    <footer className="mt-16 border-t border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-8 sm:flex-row sm:gap-10">
-        <Link href="/" className="flex shrink-0 items-center gap-2 self-start font-bold tracking-tight">
-          <LogoMark className="size-6" />
-          투표
-        </Link>
+    <footer className="mt-20 border-t border-zinc-200 bg-white text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
+      <div className={`${container} flex flex-col gap-3 py-7`}>
+        <nav className="flex flex-wrap items-center gap-y-1 text-[13px] text-zinc-700 dark:text-zinc-300">
+          {LINKS.map((link, index) => (
+            <span key={link.label} className="flex items-center">
+              {index > 0 && (
+                <span aria-hidden className="mx-3 h-3 w-px bg-zinc-300 dark:bg-zinc-700" />
+              )}
+              {link.external ? (
+                <a
+                  href={link.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-indigo-600 hover:underline dark:hover:text-indigo-400"
+                >
+                  {link.label}
+                </a>
+              ) : (
+                <Link
+                  href={link.href}
+                  className="hover:text-indigo-600 hover:underline dark:hover:text-indigo-400"
+                >
+                  {link.label}
+                </Link>
+              )}
+            </span>
+          ))}
+        </nav>
 
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm text-zinc-500 dark:text-zinc-400">
-          <dt>서비스명</dt>
-          <dd className="text-zinc-700 dark:text-zinc-300">투표 · 질문 하나, 선택지 하나</dd>
-          <dt>만든 사람</dt>
-          <dd className="font-medium text-zinc-700 dark:text-zinc-300">{MAKER}</dd>
-          <dt>GitHub</dt>
-          <dd>
-            <a
-              href={`https://${REPOSITORY}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-zinc-700 underline-offset-2 hover:text-indigo-600 hover:underline dark:text-zinc-300 dark:hover:text-indigo-400"
-            >
-              {REPOSITORY}
-            </a>
-          </dd>
-        </dl>
-      </div>
+        <p className="flex flex-wrap gap-x-4 gap-y-1 leading-relaxed">
+          <span>서비스명 : {SERVICE_NAME}</span>
+          <span>제작 : {MAKER}</span>
+          <span>GitHub : {REPOSITORY}</span>
+        </p>
 
-      <div className="border-t border-zinc-100 dark:border-zinc-900">
-        <div className="mx-auto flex max-w-2xl flex-wrap items-center justify-between gap-3 px-4 py-4 text-xs text-zinc-400 dark:text-zinc-500">
-          <p>© {new Date().getFullYear()} {MAKER}. All Rights Reserved.</p>
-          <nav className="flex gap-4">
-            <Link href="/" className="hover:text-zinc-700 dark:hover:text-zinc-300">
-              투표 목록
-            </Link>
-            <Link href="/admin" className="hover:text-zinc-700 dark:hover:text-zinc-300">
-              관리자
-            </Link>
-            <a
-              href={`https://${REPOSITORY}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-zinc-700 dark:hover:text-zinc-300"
-            >
-              GitHub
-            </a>
-          </nav>
-        </div>
+        <p className="flex items-center gap-2 pt-1 text-zinc-400 dark:text-zinc-500">
+          <LogoMark className="size-4 rounded" />
+          <span>
+            © {new Date().getFullYear()} {SERVICE_NAME}. All rights reserved.
+          </span>
+        </p>
       </div>
     </footer>
   );

@@ -11,7 +11,7 @@ export function VoteForm({ pollId, options }: { pollId: string; options: PollOpt
   return (
     <form action={formAction} className="flex flex-col gap-5">
       <input type="hidden" name="pollId" value={pollId} />
-      <fieldset className="flex flex-col gap-2.5">
+      <fieldset className="grid gap-2.5 sm:grid-cols-2">
         <legend className="mb-3 font-semibold">하나를 골라 주세요</legend>
         {options.map((option) => (
           // The real radio stays in the DOM for keyboard and screen readers;
