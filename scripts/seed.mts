@@ -17,6 +17,8 @@ type SamplePoll = {
   deadlineIn: number;
   /** Set when the admin closed it by hand, this long ago. */
   closedAgo?: number;
+  /** Overrides the staggered creation time, for polls that must be older. */
+  createdAgo?: number;
 };
 
 const SAMPLE_POLLS: SamplePoll[] = [
@@ -53,6 +55,14 @@ const SAMPLE_POLLS: SamplePoll[] = [
     // Closed on its own when the deadline passed.
     deadlineIn: -DAY,
   },
+  {
+    question: "올해 송년회 장소는 어디가 좋을까요?",
+    options: ["학교 앞 고깃집", "호텔 뷔페", "동아리방 파티"],
+    votes: [7, 3, 4],
+    // Closed 40 days ago, so it is past the 30-day public period: 보관.
+    deadlineIn: -40 * DAY,
+    createdAgo: 45 * DAY,
+  },
 ];
 
 const ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -80,7 +90,7 @@ if (count > 0) {
 for (const [index, poll] of [...SAMPLE_POLLS].reverse().entries()) {
   const id = newPollId();
   const now = Date.now();
-  const createdAt = new Date(now - (SAMPLE_POLLS.length - index) * DAY);
+  const createdAt = new Date(now - (poll.createdAgo ?? (SAMPLE_POLLS.length - index) * DAY));
   const deadline = new Date(now + poll.deadlineIn);
   const closedAt = poll.closedAgo === undefined ? null : new Date(now - poll.closedAgo);
   await sql`

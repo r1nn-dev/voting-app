@@ -46,10 +46,10 @@ export default async function AdminPage() {
                 >
                   {poll.question}
                 </Link>
-                <StatusBadge isClosed={poll.isClosed} />
+                <StatusBadge status={poll.status} />
               </div>
               <p className="mb-2 text-sm text-zinc-500">
-                {poll.isClosed ? "결과" : "득표 현황"} · 총 {poll.tally.total}표 ·{" "}
+                {poll.status === "open" ? "득표 현황" : "결과"} · 총 {poll.tally.total}표 ·{" "}
                 {poll.closedAt
                   ? `${formatKst(poll.closedAt)} 마감됨`
                   : `${formatKst(poll.deadline)} 마감 예정 (${formatRemaining(poll.deadline)} 남음)`}
@@ -62,7 +62,7 @@ export default async function AdminPage() {
                 >
                   공개 페이지
                 </Link>
-                {!poll.isClosed && (
+                {poll.status === "open" && (
                   <ConfirmActionButton
                     action={closePollAction.bind(null, poll.id)}
                     label="마감"

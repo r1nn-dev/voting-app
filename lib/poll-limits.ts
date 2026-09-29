@@ -8,4 +8,6 @@ export const POLL_LIMITS = {
   deadlineMinMinutes: 10,
   /** ...and at most this far. */
   deadlineMaxDays: 30,
+  /** A closed poll stays public this long after its 마감 시각, then it is 보관 (archived). */
+  publicDays: 30,
 } as const;

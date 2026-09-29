@@ -2,10 +2,13 @@ import { randomInt } from "node:crypto";
 import type { Sql } from "./db";
 import { POLL_LIMITS } from "./poll-limits";
 
+/** open → closed (by hand or deadline) → archived (30 days after 마감 시각). */
+export type PollStatus = "open" | "closed" | "archived";
+
 export type PollSummary = {
   id: string;
   question: string;
-  isClosed: boolean;
+  status: PollStatus;
   deadline: Date;
   /** When the poll closed (마감 시각); null while open. */
   closedAt: Date | null;
@@ -49,10 +52,20 @@ type VoterPollBase = {
   myChoice: string | null;
 };
 
-/** Results exist only once closed: an open poll carries no numbers at all (ADR-0002). */
+/**
+ * Results exist only once closed: an open poll carries no numbers at all
+ * (ADR-0002). An archived poll carries nothing but its id.
+ */
 export type VoterPoll =
   | (VoterPollBase & { status: "open"; deadline: Date })
-  | (VoterPollBase & { status: "closed"; closedAt: Date; results: ShareResults });
+  | (VoterPollBase & { status: "closed"; closedAt: Date; results: ShareResults })
+  | { id: string; status: "archived" };
+
+/** The public list: open polls by nearest deadline, closed ones by latest 마감 시각. Archived polls are left out. */
+export type PublicPollList = {
+  open: { id: string; question: string; deadline: Date }[];
+  closed: { id: string; question: string; closedAt: Date }[];
+};
 
 /** `deadline` is an absolute instant (null when the form sent nothing usable). */
 export type CreatePollInput = { question: string; options: string[]; deadline: Date | null };
@@ -94,7 +107,7 @@ export type Ranking = { options: RankedOption[]; summary: RankSummary };
 export type AdminPoll = {
   id: string;
   question: string;
-  status: "open" | "closed";
+  status: PollStatus;
   deadline: Date;
   /** 마감 시각; null while open. */
   closedAt: Date | null;
@@ -118,10 +131,10 @@ type PollsOptions = {
   now?: () => Date;
 };
 
-type PollStateRow = { is_closed: boolean; deadline: Date; closed_at: Date | null };
+type PollStateRow = { status: PollStatus; deadline: Date; closed_at: Date | null };
 
 export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
-  // The single definition of "now", "closed" and "마감 시각" (ADR-0006). Each
+  // The single definition of "now", "closed", "마감 시각" and "archived" (ADR-0006). Each
   // public function reads the clock once and passes it to these fragments, so
   // every "now" inside one statement is the same instant. They expect a
   // `polls p` alias; nothing else may decide state from closed_at alone.
@@ -130,12 +143,18 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     sql`coalesce(${now ? now().toISOString() : null}::timestamptz, now())`;
   const isClosed = (at: Instant) => sql`(p.closed_at IS NOT NULL OR p.deadline <= ${at})`;
   const pollState = (at: Instant) => sql`
-    ${isClosed(at)} AS is_closed,
+    CASE
+      WHEN NOT ${isClosed(at)} THEN 'open'
+      WHEN least(p.closed_at, p.deadline) + ${`${POLL_LIMITS.publicDays} days`}::interval <= ${at}
+        THEN 'archived'
+      ELSE 'closed'
+    END AS status,
     p.deadline,
     CASE WHEN ${isClosed(at)} THEN least(p.closed_at, p.deadline) END AS closed_at
   `;
 
-  async function listPolls(): Promise<PollSummary[]> {
+  /** Every poll with its state, newest first. */
+  async function listAll(): Promise<PollSummary[]> {
     const at = readClock();
     const rows = (await sql`
       SELECT p.id, p.question, p.created_at, ${pollState(at)}
@@ -145,11 +164,26 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     return rows.map((row) => ({
       id: row.id,
       question: row.question,
-      isClosed: row.is_closed,
+      status: row.status,
       deadline: row.deadline,
       closedAt: row.closed_at,
       createdAt: row.created_at,
     }));
+  }
+
+  async function listPolls(): Promise<PublicPollList> {
+    const polls = await listAll();
+    const byTime = (a: Date, b: Date) => a.getTime() - b.getTime();
+    return {
+      open: polls
+        .filter((poll) => poll.status === "open")
+        .toSorted((a, b) => byTime(a.deadline, b.deadline))
+        .map(({ id, question, deadline }) => ({ id, question, deadline })),
+      closed: polls
+        .filter((poll) => poll.status === "closed")
+        .map(({ id, question, closedAt }) => ({ id, question, closedAt: closedAt! }))
+        .toSorted((a, b) => byTime(b.closedAt, a.closedAt)),
+    };
   }
 
   async function createPoll(input: CreatePollInput): Promise<CreatePollResult> {
@@ -199,10 +233,11 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       WHERE p.id = ${pollId}
     `) as ({ id: string; question: string; my_choice: string | null } & PollStateRow)[];
     if (!poll) return null;
+    if (poll.status === "archived") return { id: poll.id, status: "archived" };
 
     const base = { id: poll.id, question: poll.question, myChoice: poll.my_choice };
 
-    if (!poll.is_closed) {
+    if (poll.status === "open") {
       const options = (await sql`
         SELECT id::text AS id, label FROM options WHERE poll_id = ${pollId} ORDER BY position
       `) as PollOption[];
@@ -217,7 +252,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
 
   /** Admins see 득표 현황 at any time, to judge when to close. */
   async function listPollsForAdmin(): Promise<AdminPollSummary[]> {
-    const summaries = await listPolls();
+    const summaries = await listAll();
     const votesByPoll = await countVotes(null);
     return summaries.map((summary) => ({
       ...summary,
@@ -271,7 +306,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     return {
       id: poll.id,
       question: poll.question,
-      status: poll.is_closed ? "closed" : "open",
+      status: poll.status,
       deadline: poll.deadline,
       closedAt: poll.closed_at,
       ranking: computeRanking(votes),

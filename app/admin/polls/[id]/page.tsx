@@ -24,7 +24,7 @@ export default async function AdminPollPage({ params }: PageProps<"/admin/polls/
         </Link>
         <div className="mt-2 flex items-start justify-between gap-4">
           <h1 className="text-2xl font-bold">{poll.question}</h1>
-          <StatusBadge isClosed={poll.status === "closed"} />
+          <StatusBadge status={poll.status} />
         </div>
         <p className="mt-2 text-sm text-zinc-500">
           {poll.closedAt
