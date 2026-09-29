@@ -5,15 +5,11 @@ import { POLL_LIMITS } from "./poll-limits";
 /** open → closed (by hand or deadline) → archived (30 days after 마감 시각). */
 export type PollStatus = "open" | "closed" | "archived";
 
-export type PollSummary = {
-  id: string;
-  question: string;
-  status: PollStatus;
-  deadline: Date;
-  /** When the poll closed (마감 시각); null while open. */
-  closedAt: Date | null;
-  createdAt: Date;
-};
+/** A poll's state as every list sees it; only closed and archived polls have a 마감 시각. */
+type PollSummary = { id: string; question: string; deadline: Date } & (
+  | { status: "open" }
+  | { status: "closed" | "archived"; closedAt: Date }
+);
 
 export type PollOption = { id: string; label: string };
 
@@ -32,7 +28,24 @@ export type OptionTally = OptionVotes & {
  */
 export type VoteTally = { total: number; options: OptionTally[] };
 
-export type AdminPollSummary = PollSummary & { tally: VoteTally };
+/** One row of the admin list: enough to judge a poll at a glance. */
+export type AdminListItem = {
+  id: string;
+  question: string;
+  deadline: Date;
+  total: number;
+  /** Options with the most votes (several when tied); empty when nobody has voted. */
+  leaders: PollOption[];
+};
+
+export type AdminPollList = {
+  /** By nearest deadline. */
+  open: AdminListItem[];
+  /** Closed and still public, by latest 마감 시각. */
+  closed: (AdminListItem & { closedAt: Date })[];
+  /** Past the public period, by latest 마감 시각. */
+  archived: (AdminListItem & { closedAt: Date })[];
+};
 
 /**
  * 결과 as voters see it: each option's share, largest first (ties keep
@@ -157,32 +170,22 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   async function listAll(): Promise<PollSummary[]> {
     const at = readClock();
     const rows = (await sql`
-      SELECT p.id, p.question, p.created_at, ${pollState(at)}
+      SELECT p.id, p.question, ${pollState(at)}
       FROM polls p
       ORDER BY p.created_at DESC, p.id DESC
-    `) as ({ id: string; question: string; created_at: Date } & PollStateRow)[];
-    return rows.map((row) => ({
-      id: row.id,
-      question: row.question,
-      status: row.status,
-      deadline: row.deadline,
-      closedAt: row.closed_at,
-      createdAt: row.created_at,
-    }));
+    `) as ({ id: string; question: string } & PollStateRow)[];
+    return rows.map(({ id, question, status, deadline, closed_at }) =>
+      status === "open"
+        ? { id, question, deadline, status }
+        : { id, question, deadline, status, closedAt: closed_at! },
+    );
   }
 
   async function listPolls(): Promise<PublicPollList> {
-    const polls = await listAll();
-    const byTime = (a: Date, b: Date) => a.getTime() - b.getTime();
+    const { open, closed } = groupByStatus(await listAll());
     return {
-      open: polls
-        .filter((poll) => poll.status === "open")
-        .toSorted((a, b) => byTime(a.deadline, b.deadline))
-        .map(({ id, question, deadline }) => ({ id, question, deadline })),
-      closed: polls
-        .filter((poll) => poll.status === "closed")
-        .map(({ id, question, closedAt }) => ({ id, question, closedAt: closedAt! }))
-        .toSorted((a, b) => byTime(b.closedAt, a.closedAt)),
+      open: open.map(({ id, question, deadline }) => ({ id, question, deadline })),
+      closed: closed.map(({ id, question, closedAt }) => ({ id, question, closedAt })),
     };
   }
 
@@ -251,13 +254,19 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   }
 
   /** Admins see 득표 현황 at any time, to judge when to close. */
-  async function listPollsForAdmin(): Promise<AdminPollSummary[]> {
-    const summaries = await listAll();
+  async function listPollsForAdmin(): Promise<AdminPollList> {
+    const { open, closed, archived } = groupByStatus(await listAll());
     const votesByPoll = await countVotes(null);
-    return summaries.map((summary) => ({
-      ...summary,
-      tally: computeTally(votesByPoll.get(summary.id) ?? []),
-    }));
+    const item = ({ id, question, deadline }: PollSummary): AdminListItem => {
+      const tally = computeTally(votesByPoll.get(id) ?? []);
+      const leaders = tally.options.filter((o) => o.isTop).map((o) => ({ id: o.id, label: o.label }));
+      return { id, question, deadline, total: tally.total, leaders };
+    };
+    return {
+      open: open.map(item),
+      closed: closed.map((poll) => ({ ...item(poll), closedAt: poll.closedAt })),
+      archived: archived.map((poll) => ({ ...item(poll), closedAt: poll.closedAt })),
+    };
   }
 
   /** Per-option vote counts in creation order, grouped by poll; null counts every poll. */
@@ -388,6 +397,19 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     closePoll,
     deletePoll,
   };
+}
+
+type Closed = Extract<PollSummary, { closedAt: Date }>;
+
+/** Open by nearest deadline; closed and archived by latest 마감 시각. Sorts are stable. */
+function groupByStatus(polls: PollSummary[]) {
+  const open = polls
+    .filter((poll): poll is Extract<PollSummary, { status: "open" }> => poll.status === "open")
+    .toSorted((a, b) => a.deadline.getTime() - b.deadline.getTime());
+  const byLatestClose = (a: Closed, b: Closed) => b.closedAt.getTime() - a.closedAt.getTime();
+  const closedIn = (status: Closed["status"]) =>
+    polls.filter((poll): poll is Closed => poll.status === status).toSorted(byLatestClose);
+  return { open, closed: closedIn("closed"), archived: closedIn("archived") };
 }
 
 function computeTally(options: OptionVotes[]): VoteTally {

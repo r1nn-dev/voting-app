@@ -2,16 +2,30 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/admin-session";
 import { getSql } from "@/lib/db";
 import { formatKst, formatRemaining } from "@/lib/kst-time";
-import { createPolls } from "@/lib/polls";
-import { TallyBars } from "../tally-bars";
-import { StatusBadge } from "../status-badge";
+import { POLL_LIMITS } from "@/lib/poll-limits";
+import { createPolls, type AdminListItem } from "@/lib/polls";
 import { logout } from "./auth-actions";
-import { ConfirmActionButton } from "./confirm-action-button";
-import { closePollAction, deletePollAction } from "./poll-actions";
 
-export default async function AdminPage() {
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const TABS = [
+  { key: "open", label: "진행 중", empty: "진행 중인 투표가 없습니다." },
+  { key: "closed", label: "마감", empty: "마감된 투표가 없습니다." },
+  { key: "archived", label: "보관", empty: "보관된 투표가 없습니다." },
+] as const;
+
+type Tab = (typeof TABS)[number]["key"];
+
+/** Unknown or missing values fall back to the open tab. */
+function parseTab(value: string | string[] | undefined): Tab {
+  return TABS.find((tab) => tab.key === value)?.key ?? "open";
+}
+
+export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
   await requireAdmin();
-  const polls = await createPolls(getSql()).listPollsForAdmin();
+  const current = parseTab((await searchParams).tab);
+  const lists = await createPolls(getSql()).listPollsForAdmin();
+  const { empty } = TABS.find((tab) => tab.key === current)!;
 
   return (
     <section>
@@ -30,56 +44,77 @@ export default async function AdminPage() {
         </div>
       </div>
 
-      {polls.length === 0 ? (
-        <p className="text-zinc-500">아직 투표가 없습니다.</p>
+      <nav className="mb-4 flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
+        {TABS.map((tab) => (
+          <Link
+            key={tab.key}
+            href={tab.key === "open" ? "/admin" : `/admin?tab=${tab.key}`}
+            aria-current={tab.key === current ? "page" : undefined}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm ${
+              tab.key === current
+                ? "border-zinc-900 font-medium dark:border-zinc-100"
+                : "border-transparent text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+            }`}
+          >
+            {tab.label} <span className="tabular-nums text-zinc-500">{lists[tab.key].length}</span>
+          </Link>
+        ))}
+      </nav>
+
+      {lists[current].length === 0 ? (
+        <p className="text-zinc-500">{empty}</p>
       ) : (
-        <ul className="flex flex-col gap-4">
-          {polls.map((poll) => (
-            <li
-              key={poll.id}
-              className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
-            >
-              <div className="mb-3 flex items-center justify-between gap-4">
-                <Link
-                  href={`/admin/polls/${poll.id}`}
-                  className="truncate font-medium hover:underline"
-                >
-                  {poll.question}
-                </Link>
-                <StatusBadge status={poll.status} />
-              </div>
-              <p className="mb-2 text-sm text-zinc-500">
-                {poll.status === "open" ? "득표 현황" : "결과"} · 총 {poll.tally.total}표 ·{" "}
-                {poll.closedAt
-                  ? `${formatKst(poll.closedAt)} 마감됨`
-                  : `${formatKst(poll.deadline)} 마감 예정 (${formatRemaining(poll.deadline)} 남음)`}
-              </p>
-              <TallyBars tally={poll.tally} />
-              <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-                <Link
-                  href={`/polls/${poll.id}`}
-                  className="rounded-md px-2 py-1 text-sm text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                  공개 페이지
-                </Link>
-                {poll.status === "open" && (
-                  <ConfirmActionButton
-                    action={closePollAction.bind(null, poll.id)}
-                    label="마감"
-                    confirmMessage="마감은 되돌릴 수 없습니다."
-                  />
-                )}
-                <ConfirmActionButton
-                  action={deletePollAction.bind(null, poll.id)}
-                  label="삭제"
-                  confirmMessage="선택지와 표까지 모두 사라집니다."
-                  tone="danger"
+        <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+          {current === "open"
+            ? lists.open.map((poll) => (
+                <PollRow
+                  key={poll.id}
+                  poll={poll}
+                  when={`${formatKst(poll.deadline)} 마감 예정 · ${formatRemaining(poll.deadline)} 남음`}
                 />
-              </div>
-            </li>
-          ))}
+              ))
+            : lists[current].map((poll) => (
+                <PollRow
+                  key={poll.id}
+                  poll={poll}
+                  when={`${formatKst(poll.closedAt)} 마감됨`}
+                  note={
+                    current === "closed"
+                      ? `보관까지 ${formatRemaining(
+                          new Date(poll.closedAt.getTime() + POLL_LIMITS.publicDays * DAY_MS),
+                        )}`
+                      : undefined
+                  }
+                />
+              ))}
         </ul>
       )}
     </section>
+  );
+}
+
+function PollRow({ poll, when, note }: { poll: AdminListItem; when: string; note?: string }) {
+  const leader =
+    poll.leaders.length === 0
+      ? "표 없음"
+      : `1위 ${poll.leaders.map((option) => option.label).join(", ")}${
+          poll.leaders.length > 1 ? " (동점)" : ""
+        }`;
+
+  return (
+    <li>
+      <Link
+        href={`/admin/polls/${poll.id}`}
+        className="flex flex-col gap-1 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-900"
+      >
+        <span className="flex items-baseline justify-between gap-4">
+          <span className="truncate font-medium">{poll.question}</span>
+          {note && <span className="shrink-0 text-xs text-zinc-500">{note}</span>}
+        </span>
+        <span className="text-sm text-zinc-500">
+          {when} · 총 {poll.total}표 · {leader}
+        </span>
+      </Link>
+    </li>
   );
 }

@@ -36,14 +36,6 @@ export async function closePollAction(pollId: string): Promise<void> {
   revalidatePollPages(pollId);
 }
 
-export async function deletePollAction(pollId: string): Promise<void> {
-  await requireAdmin();
-
-  await createPolls(getSql()).deletePoll(pollId);
-
-  revalidatePollPages(pollId);
-}
-
 /** From the admin detail page, whose poll no longer exists afterwards. */
 export async function deletePollAndReturnToListAction(pollId: string): Promise<void> {
   await requireAdmin();

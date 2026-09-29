@@ -584,8 +584,8 @@ describe("deletePoll", () => {
     expect(await polls.deletePoll(doomed)).toEqual({ ok: true });
 
     expect(await polls.getPollForVoter(doomed, null)).toBeNull();
-    const list = await polls.listPollsForAdmin();
-    expect(list.map((poll) => [poll.id, poll.tally.total])).toEqual([[kept, 2]]);
+    const { open } = await polls.listPollsForAdmin();
+    expect(open.map((poll) => [poll.id, poll.total])).toEqual([[kept, 2]]);
   });
 
   it("없는 투표를 지워도 성공한다", async () => {
@@ -597,26 +597,66 @@ describe("deletePoll", () => {
 });
 
 describe("listPollsForAdmin", () => {
-  it("마감 여부와 관계없이 선택지별 득표 현황과 총 표 수를 보여준다", async () => {
-    const open = await createOpenPoll("진행 중", ["a", "b"]);
-    const closed = await createOpenPoll("마감", ["x", "y"]);
-    await castVotes(open, [1, 2]);
-    await castVotes(closed, [3, 0]);
-    await polls.closePoll(closed);
+  /** Makes a poll on another clock, so every state can exist at one moment. */
+  async function pollOn(clock: Date, question: string, deadline: Date) {
+    const result = await pollsAt(clock).createPoll({ question, options: ["a", "b"], deadline });
+    if (!result.ok) throw new Error(`투표 생성 실패: ${JSON.stringify(result.errors)}`);
+    return result.id;
+  }
 
-    const list = await polls.listPollsForAdmin();
+  it("진행 중 / 마감 / 보관으로 나누고, 진행 중은 마감 예정 시각이 가까운 순, 나머지는 마감 시각 최근순이다", async () => {
+    // Archived by the time we look (마감 시각 + 30일 ≤ 32일째).
+    const archivedEarly = await pollOn(T0, "보관 (1시간째 마감)", at(HOUR));
+    const archivedLate = await pollOn(T0, "보관 (1일째 마감)", at(DAY));
+    // Closed but still public.
+    const closedByDeadline = await pollOn(at(25 * DAY), "마감 (31일째 기한)", at(31 * DAY));
+    const closedByHand = await pollOn(at(25 * DAY), "마감 (30일째 직접)", at(40 * DAY));
+    await pollsAt(at(30 * DAY)).closePoll(closedByHand);
+    // Still open.
+    const openLater = await pollOn(at(25 * DAY), "진행 중 (50일째)", at(50 * DAY));
+    const openSooner = await pollOn(at(25 * DAY), "진행 중 (33일째)", at(33 * DAY));
 
-    expect(
-      list.map((poll) => [
-        poll.question,
-        poll.status,
-        poll.tally.total,
-        poll.tally.options.map((option) => [option.label, option.votes]),
-      ]),
-    ).toEqual([
-      ["마감", "closed", 3, [["x", 3], ["y", 0]]],
-      ["진행 중", "open", 3, [["a", 1], ["b", 2]]],
+    const { open, closed, archived } = await pollsAt(at(32 * DAY)).listPollsForAdmin();
+
+    expect(open.map((poll) => [poll.id, poll.deadline])).toEqual([
+      [openSooner, at(33 * DAY)],
+      [openLater, at(50 * DAY)],
     ]);
+    expect(closed.map((poll) => [poll.id, poll.closedAt])).toEqual([
+      [closedByDeadline, at(31 * DAY)],
+      [closedByHand, at(30 * DAY)],
+    ]);
+    expect(archived.map((poll) => [poll.id, poll.closedAt])).toEqual([
+      [archivedLate, at(DAY)],
+      [archivedEarly, at(HOUR)],
+    ]);
+  });
+
+  it("각 항목은 총 표 수와 현재 1위를 담는다 (동점이면 여럿, 표가 없으면 없음)", async () => {
+    const decided = await createOpenPoll("결정", ["a", "b"]);
+    const tied = await createOpenPoll("동점", ["a", "b"]);
+    const empty = await createOpenPoll("표 없음", ["a", "b"]);
+    await castVotes(decided, [1, 2]);
+    await castVotes(tied, [1, 1]);
+
+    const { open } = await polls.listPollsForAdmin();
+    const byId = new Map(open.map((poll) => [poll.id, poll]));
+
+    expect(byId.get(decided)).toMatchObject({ question: "결정", total: 3 });
+    expect(byId.get(decided)?.leaders.map((option) => option.label)).toEqual(["b"]);
+    expect(byId.get(tied)?.leaders.map((option) => option.label)).toEqual(["a", "b"]);
+    expect(byId.get(empty)).toMatchObject({ total: 0, leaders: [] });
+  });
+
+  it("마감 전에도 관리자 목록에는 득표 현황(총 표 수)이 있다", async () => {
+    const id = await createOpenPoll("진행 중", ["a", "b"]);
+    await castVotes(id, [2, 0]);
+
+    const { open, closed, archived } = await polls.listPollsForAdmin();
+
+    expect(open.map((poll) => [poll.id, poll.total])).toEqual([[id, 2]]);
+    expect(closed).toEqual([]);
+    expect(archived).toEqual([]);
   });
 });
 
