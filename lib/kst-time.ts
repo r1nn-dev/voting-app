@@ -64,11 +64,12 @@ export function toKstInputValue(date: Date): string {
   return `${year}-${pad(month)}-${pad(day)}T${pad(hour)}:${minute}`;
 }
 
-/** Reads a datetime-local value as KST. Null when missing or malformed. */
+/** Reads a datetime-local value as KST. Null when missing, malformed or impossible (Feb 30). */
 export function parseKstInput(value: unknown): Date | null {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
   const date = new Date(`${value}:00${KST_OFFSET}`);
-  return Number.isNaN(date.getTime()) ? null : date;
+  // Date rolls impossible days over (Feb 30 → Mar 2); the round trip catches that.
+  return !Number.isNaN(date.getTime()) && toKstInputValue(date) === value ? date : null;
 }
 
 /** datetime-local value (KST) for `ms` from now. */

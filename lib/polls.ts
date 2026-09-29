@@ -64,9 +64,6 @@ export type CastVoteFailure = "not_found" | "closed" | "already_voted" | "invali
 
 export type CastVoteResult = { ok: true } | { ok: false; reason: CastVoteFailure };
 
-const DEADLINE_MIN_MINUTES = POLL_LIMITS.deadlineMinMinutes;
-const DEADLINE_MAX_DAYS = POLL_LIMITS.deadlineMaxDays;
-
 const UNIQUE_VIOLATION = "23505";
 const FOREIGN_KEY_VIOLATION = "23503";
 
@@ -78,20 +75,24 @@ type PollsOptions = {
 type PollStateRow = { is_closed: boolean; deadline: Date; closed_at: Date | null };
 
 export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
-  // The single definition of "now", "closed" and "마감 시각" (ADR-0006). Every
-  // query that needs them embeds these fragments on a `polls p` alias; nothing
-  // else may decide state from closed_at alone.
-  const currentTime = () => sql`coalesce(${now ? now().toISOString() : null}::timestamptz, now())`;
-  const isClosed = () => sql`(p.closed_at IS NOT NULL OR p.deadline <= ${currentTime()})`;
-  const pollState = () => sql`
-    ${isClosed()} AS is_closed,
+  // The single definition of "now", "closed" and "마감 시각" (ADR-0006). Each
+  // public function reads the clock once and passes it to these fragments, so
+  // every "now" inside one statement is the same instant. They expect a
+  // `polls p` alias; nothing else may decide state from closed_at alone.
+  type Instant = ReturnType<typeof sql>;
+  const readClock = (): Instant =>
+    sql`coalesce(${now ? now().toISOString() : null}::timestamptz, now())`;
+  const isClosed = (at: Instant) => sql`(p.closed_at IS NOT NULL OR p.deadline <= ${at})`;
+  const pollState = (at: Instant) => sql`
+    ${isClosed(at)} AS is_closed,
     p.deadline,
-    CASE WHEN ${isClosed()} THEN least(p.closed_at, p.deadline) END AS closed_at
+    CASE WHEN ${isClosed(at)} THEN least(p.closed_at, p.deadline) END AS closed_at
   `;
 
   async function listPolls(): Promise<PollSummary[]> {
+    const at = readClock();
     const rows = (await sql`
-      SELECT p.id, p.question, p.created_at, ${pollState()}
+      SELECT p.id, p.question, p.created_at, ${pollState(at)}
       FROM polls p
       ORDER BY p.created_at DESC, p.id DESC
     `) as ({ id: string; question: string; created_at: Date } & PollStateRow)[];
@@ -112,6 +113,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
     if (errors || !input.deadline) return { ok: false, errors: errors ?? {} };
 
     const id = newPollId();
+    const at = readClock();
     // One statement, so a poll can never exist without its options. The
     // deadline range is checked here, against the same "now" as every judgement.
     const inserted = await sql`
@@ -119,8 +121,8 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
         INSERT INTO polls (id, question, deadline)
         SELECT ${id}, ${question}, ${input.deadline.toISOString()}::timestamptz
         WHERE ${input.deadline.toISOString()}::timestamptz
-          BETWEEN ${currentTime()} + ${`${DEADLINE_MIN_MINUTES} minutes`}::interval
-              AND ${currentTime()} + ${`${DEADLINE_MAX_DAYS} days`}::interval
+          BETWEEN ${at} + ${`${POLL_LIMITS.deadlineMinMinutes} minutes`}::interval
+              AND ${at} + ${`${POLL_LIMITS.deadlineMaxDays} days`}::interval
         RETURNING id
       )
       INSERT INTO options (poll_id, label, position)
@@ -132,7 +134,7 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
       return {
         ok: false,
         errors: {
-          deadline: `마감 예정 시각은 지금부터 ${DEADLINE_MIN_MINUTES}분 뒤 ~ ${DEADLINE_MAX_DAYS}일 뒤 사이여야 합니다.`,
+          deadline: `마감 예정 시각은 지금부터 ${POLL_LIMITS.deadlineMinMinutes}분 뒤 ~ ${POLL_LIMITS.deadlineMaxDays}일 뒤 사이여야 합니다.`,
         },
       };
     }
@@ -140,11 +142,12 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   }
 
   async function getPollForVoter(pollId: string, voterId: string | null): Promise<VoterPoll | null> {
+    const at = readClock();
     const [poll] = (await sql`
       SELECT
         p.id,
         p.question,
-        ${pollState()},
+        ${pollState(at)},
         (SELECT v.option_id::text FROM votes v WHERE v.poll_id = p.id AND v.voter_id = ${voterId}::uuid) AS my_choice
       FROM polls p
       WHERE p.id = ${pollId}
@@ -197,9 +200,10 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
    * its 마감 시각, including one whose deadline has already passed.
    */
   async function closePoll(pollId: string): Promise<{ ok: true } | { ok: false; reason: "not_found" }> {
+    const at = readClock();
     const [closed] = await sql`
-      UPDATE polls p SET closed_at = ${currentTime()}
-      WHERE p.id = ${pollId} AND NOT ${isClosed()}
+      UPDATE polls p SET closed_at = ${at}
+      WHERE p.id = ${pollId} AND NOT ${isClosed(at)}
       RETURNING 1
     `;
     if (closed) return { ok: true };
@@ -219,13 +223,14 @@ export function createPolls(sql: Sql, { now }: PollsOptions = {}) {
   async function castVote(pollId: string, optionId: string, voterId: string): Promise<CastVoteResult> {
     if (!/^\d{1,18}$/.test(optionId)) return { ok: false, reason: "invalid_option" };
 
+    const at = readClock();
     let inserted: unknown[];
     try {
       inserted = await sql`
         INSERT INTO votes (poll_id, option_id, voter_id)
         SELECT p.id, ${optionId}::bigint, ${voterId}::uuid
         FROM polls p
-        WHERE p.id = ${pollId} AND NOT ${isClosed()}
+        WHERE p.id = ${pollId} AND NOT ${isClosed(at)}
         RETURNING 1
       `;
     } catch (error) {
